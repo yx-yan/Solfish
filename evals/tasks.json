@@ -1,0 +1,81 @@
+[
+  {
+    "id": "jobs/add-new",
+    "prompt": "I applied to Acme for the AI Engineer role today.",
+    "checks": [
+      {"sql": "SELECT count(*) FROM applications WHERE company LIKE '%Acme%' AND status = 'applied'", "equals": 1}
+    ]
+  },
+  {
+    "id": "jobs/no-duplicate",
+    "setup": ["INSERT INTO applications (company, role, status) VALUES ('Acme', 'AI Engineer', 'saved')"],
+    "prompt": "I just sent my application to Acme for the AI Engineer job.",
+    "checks": [
+      {"sql": "SELECT count(*) FROM applications WHERE company LIKE '%Acme%'", "equals": 1},
+      {"sql": "SELECT status FROM applications WHERE company LIKE '%Acme%'", "equals": "applied"}
+    ]
+  },
+  {
+    "id": "jobs/rejection",
+    "setup": ["INSERT INTO applications (company, role, status, applied_on) VALUES ('Globex', 'SWE', 'applied', '2026-10-01')"],
+    "prompt": "Globex rejected me.",
+    "checks": [
+      {"sql": "SELECT status FROM applications WHERE company = 'Globex'", "equals": "rejected"}
+    ]
+  },
+  {
+    "id": "jobs/interview-with-note",
+    "setup": ["INSERT INTO applications (company, role, status, applied_on) VALUES ('Initech', 'ML Engineer', 'applied', '2026-10-05')"],
+    "prompt": "Initech scheduled a technical interview with me for next Tuesday.",
+    "checks": [
+      {"sql": "SELECT status FROM applications WHERE company = 'Initech'", "equals": "interview"},
+      {"sql": "SELECT notes != '' FROM applications WHERE company = 'Initech'", "equals": 1}
+    ]
+  },
+  {
+    "id": "jobs/list-active",
+    "setup": [
+      "INSERT INTO applications (company, role, status) VALUES ('Acme', 'AI Engineer', 'applied')",
+      "INSERT INTO applications (company, role, status) VALUES ('Globex', 'SWE', 'rejected')",
+      "INSERT INTO applications (company, role, status) VALUES ('Initech', 'ML Engineer', 'interview')"
+    ],
+    "prompt": "Which of my applications are still in play?",
+    "checks": [
+      {"tool_called": "list_applications"},
+      {"reply_contains_all": ["Acme", "Initech"]},
+      {"reply_excludes": "Globex is still"}
+    ]
+  },
+  {
+    "id": "jobs/chinese-multi-step",
+    "setup": ["INSERT INTO applications (company, role, status) VALUES ('Globex', 'SWE', 'interview')"],
+    "prompt": "我今天投了字节跳动的大模型算法工程师，另外 Globex 给我发 offer 了！",
+    "checks": [
+      {"sql": "SELECT count(*) FROM applications WHERE (company LIKE '%字节%' OR company LIKE '%ByteDance%') AND status = 'applied'", "equals": 1},
+      {"sql": "SELECT status FROM applications WHERE company = 'Globex'", "equals": "offer"}
+    ]
+  },
+  {
+    "id": "memory/remember",
+    "prompt": "Remember that I'm targeting AI engineer roles in Singapore.",
+    "checks": [
+      {"sql": "SELECT count(*) > 0 FROM memories WHERE content LIKE '%Singapore%'", "equals": 1}
+    ]
+  },
+  {
+    "id": "memory/use-snapshot",
+    "setup": ["INSERT INTO memories (content) VALUES ('The user prefers interviews in the morning.')"],
+    "prompt": "What time of day do I like to have interviews?",
+    "checks": [
+      {"reply_contains_all": ["morning"]}
+    ]
+  },
+  {
+    "id": "core/write-note",
+    "prompt": "Save a note to notes/todo.md that says: follow up with Acme recruiter.",
+    "checks": [
+      {"tool_called": "write_file"},
+      {"file_contains": ["notes/todo.md", "Acme"]}
+    ]
+  }
+]
