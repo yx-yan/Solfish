@@ -4,11 +4,12 @@
 
 Solfish is the agent I use day to day. Its core is a hand-written agent loop with no agent
 framework: tool calling, approval gates, long-term memory, tracing and evals are all in this
-repo, small enough to read in one sitting. Capabilities plug in as **skills**; the first one
-runs my job search.
+repo, small enough to read in one sitting. Capabilities plug in as **skills**: job search and
+résumé tailoring, social-media publishing, and research (arXiv search, reading, a paper library).
 
 > 中文简介：Solfish（solve + fish）是我自己从零写的通用个人 agent。不依赖 agent 框架，
-> 核心循环、工具调用、记忆、追踪和评测都在这个仓库里。第一个技能是求职助手。
+> 核心循环、工具调用、记忆、追踪和评测都在这个仓库里。技能包括：求职与简历定制投递、
+> 自媒体内容排期发布、科研（arXiv 检索、读论文、文献库）。
 
 ## What it looks like
 
@@ -40,8 +41,11 @@ flowchart LR
     L -->|validate + approve| R[Tool registry]
     R --> S1[core: files, clock]
     R --> S2[memory: remember / recall]
-    R --> S3[jobs: application tracker]
-    S2 & S3 --> DB[(SQLite)]
+    R --> S3[jobs + resume: tracker, LaTeX tailoring, email]
+    R --> S4[content: drafts, schedule, publishers]
+    R --> S5[research: arXiv, paper library]
+    S2 & S3 & S4 & S5 --> DB[(SQLite)]
+    C[cron: solfish publish-due] -.no model.-> S4
     L -.events.-> T[Tracer → JSONL]
     L -.events.-> P[CLI printer]
 ```
@@ -69,7 +73,16 @@ pip install -e ".[dev]"
 solfish                                    # chat
 solfish ask "what applications are still active?"
 solfish --skills core,memory               # load only some skills
+solfish publish-due                        # publish scheduled posts that are due (run from cron)
 ```
+
+Optional setup per skill (see `.env.example`):
+
+- **resume**: `SOLFISH_RESUME_DIR` points at a LaTeX résumé repo; needs XeLaTeX. Email
+  applications need the `SOLFISH_SMTP_*` settings.
+- **content**: schedule automatic publishing with cron, e.g.
+  `*/15 * * * * solfish publish-due`.
+- **research**: nothing; arXiv needs no key.
 
 Data lives in `~/.solfish/` (SQLite database, workspace, traces) and never enters the repo.
 
@@ -91,7 +104,11 @@ tools, actually does the right thing.
 - [x] Agent loop, tool registry, approval gate, tracing
 - [x] Skills: core (files, clock), memory, jobs (application tracker)
 - [x] Offline tests and live eval suite
-- [ ] jobs: tailor my LaTeX résumé to a job description and build the PDF
+- [x] resume: tailor my LaTeX résumé to a JD, build the PDF (one-page check), apply by email
+- [x] content: per-platform drafts, scheduling, outbox publisher, `publish-due` for cron
+- [x] research: arXiv search, paged full-text reading, paper library with notes
+- [ ] content: API publishers (X, Bilibili, the yuxuanyan.com blog)
+- [ ] research: run experiments in a sandbox (code execution) and log results
 - [ ] jobs: interview prep from a JD + my past notes
 - [ ] MCP client: load tools from any MCP server as a skill
 - [ ] Context management for long sessions (compaction)

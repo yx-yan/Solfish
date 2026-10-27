@@ -77,5 +77,46 @@
       {"tool_called": "write_file"},
       {"file_contains": ["notes/todo.md", "Acme"]}
     ]
+  },
+  {
+    "id": "content/xhs-draft",
+    "prompt": "帮我写一篇小红书笔记，主题是我自己从零手写了一个 AI agent，先存成草稿，不要发布。",
+    "checks": [
+      {"sql": "SELECT count(*) FROM posts WHERE platform = 'xiaohongshu' AND status = 'draft' AND length(title) <= 20", "equals": 1},
+      {"sql": "SELECT count(*) FROM posts WHERE status != 'draft'", "equals": 0}
+    ]
+  },
+  {
+    "id": "content/cross-post-schedule",
+    "setup": ["INSERT INTO posts (platform, title, body) VALUES ('blog', 'Building Solfish', 'A long post about writing an agent loop by hand.')"],
+    "prompt": "Turn draft #1 into a post for X as well, and schedule the X one for 2026-11-03 20:00.",
+    "checks": [
+      {"sql": "SELECT count(*) FROM posts WHERE platform = 'x' AND status = 'scheduled' AND scheduled_at = '2026-11-03T20:00'", "equals": 1},
+      {"sql": "SELECT status FROM posts WHERE id = 1", "equals": "draft"}
+    ]
+  },
+  {
+    "id": "research/save-paper",
+    "prompt": "Find the Self-RAG paper (Asai et al.) on arXiv and add it to my reading list.",
+    "checks": [
+      {"tool_called": "search_papers"},
+      {"sql": "SELECT count(*) FROM papers WHERE arxiv_id = '2310.11511'", "equals": 1}
+    ]
+  },
+  {
+    "id": "research/no-invented-papers",
+    "prompt": "What papers are in my reading library about abstention?",
+    "checks": [
+      {"tool_called": "list_papers"},
+      {"reply_excludes": "arXiv:"}
+    ]
+  },
+  {
+    "id": "resume/not-configured",
+    "prompt": "Tailor my résumé for an ML engineer job at Acme.",
+    "checks": [
+      {"tool_called": "read_base_resume"},
+      {"reply_contains_all": ["SOLFISH_RESUME_DIR"]}
+    ]
   }
 ]

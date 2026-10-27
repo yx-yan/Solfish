@@ -22,7 +22,7 @@ from typing import Any
 
 from solfish.app import build_agent
 from solfish.config import Settings
-from solfish.skills import jobs, memory
+from solfish.skills import content, jobs, memory, research
 
 HERE = Path(__file__).parent
 
@@ -53,7 +53,7 @@ def run_task(task: dict[str, Any]) -> dict[str, Any]:
         settings = Settings(home=Path(tmp))
         settings.ensure_dirs()
         db = sqlite3.connect(settings.db_path)
-        db.executescript(jobs.SCHEMA + memory.SCHEMA)
+        db.executescript(jobs.SCHEMA + memory.SCHEMA + content.SCHEMA + research.SCHEMA)
         for stmt in task.get("setup", []):
             db.execute(stmt)
         db.commit()

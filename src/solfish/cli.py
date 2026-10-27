@@ -10,6 +10,8 @@ import anthropic
 
 from .agent import format_args
 from .app import DEFAULT_SKILLS, build_agent
+from .config import Settings
+from .skills import content, open_db
 from .trace import Tracer
 
 DIM, CYAN, RED, RESET = "\033[2m", "\033[36m", "\033[31m", "\033[0m"
@@ -62,7 +64,14 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("chat", help="interactive session (default)")
     ask = sub.add_parser("ask", help="one question, then exit")
     ask.add_argument("prompt", nargs="+")
+    sub.add_parser("publish-due", help="publish scheduled posts that are due (for cron; no model)")
     args = p.parse_args(argv)
+
+    if args.cmd == "publish-due":
+        settings = Settings()
+        for line in content.publish_due(settings, open_db(settings)) or ["Nothing due."]:
+            print(line)
+        return 0
 
     agent, tracer = build_agent(
         skills=tuple(s.strip() for s in args.skills.split(",") if s.strip()),

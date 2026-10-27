@@ -80,3 +80,45 @@ prompt or tool change can be judged on numbers.
 - Server-side refusal fallback (`fallbacks: "default"`): if the main model declines, the API
   retries on another model in the same call. The CLI says when this happened.
 - Non-streaming requests with `max_tokens=16000`; streaming is on the roadmap for the chat UI.
+
+## 10. Résumé: the source repo is read-only
+
+`build_resume` copies the résumé repo to a temp dir, writes the tailored `.tex` there and
+compiles it, so the class file and fonts resolve by relative path exactly as in the real repo,
+and the master copy can never be overwritten by the agent. Outputs land in the workspace. Two
+guards matter more than they look:
+
+- **Shell escape off.** The model writes the LaTeX, and `\write18` would let LaTeX run shell
+  commands. XeLaTeX runs with `-no-shell-escape`.
+- **Page count is fed back.** The résumé must fit on one page; the tool reads the page count
+  from the log and tells the model to cut and rebuild. A deterministic check beats asking the
+  model to estimate length.
+
+The instructions forbid inventing experience. Tailoring means reordering and rewording what's
+there; a gap goes back to the user.
+
+## 11. Publishing: approve once, then run without the model
+
+Posts are rows (`draft → scheduled → published | failed`). Approval happens at
+`schedule_post`; `solfish publish-due` then publishes what's due with no model call, so cron
+can run it cheaply and predictably. Letting the model wake up and decide to post would be the
+wrong place for autonomy: what to post is a judgement call made with the user; when to post is
+a timestamp.
+
+Each platform has a `Publisher` (`post → location`). Most Chinese platforms have no posting
+API for individuals, and browser automation against them breaks often and risks the account,
+so the default publisher is an **outbox**: a folder with the text and media, ready to upload.
+A platform that does have an API is one function in `PUBLISHERS`. Failures are stored on the
+post, not lost.
+
+Platform limits (小红书 title ≤ 20 characters, X ≤ 280) are checked in code when a draft is
+saved, so the model gets an error it can fix instead of a post that fails later.
+
+## 12. Research: grounded and paged
+
+Papers come from the arXiv API (no key). Full text comes from arXiv's HTML rendering, stripped
+to text (formulas kept as their LaTeX `alttext`) and served in pages of 15k characters: a whole
+paper would be truncated by the 20k result limit, and paging lets the model read only as far as
+it needs. The library is a table, so "what have I read about X" is a query over real records,
+and the instructions require arXiv ids for every claim about a paper.
+
