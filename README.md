@@ -65,8 +65,8 @@ Design decisions and trade-offs are written up in [`docs/design.md`](docs/design
 ## Quick start
 
 Requires Python 3.11+ and a DeepSeek API key (`DEEPSEEK_API_KEY`). Solfish uses DeepSeek's
-Anthropic-compatible endpoint, so switching back to Claude is only environment variables
-(see `.env.example`).
+Anthropic-compatible endpoint, so switching back to Claude is only environment variables.
+Copy `.env.example` to `.env`; it is read on startup, and variables set in the shell win.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate

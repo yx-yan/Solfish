@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from solfish.app import build_agent
-from solfish.config import Settings
+from solfish.config import Settings, load_dotenv
 from solfish.skills import content, jobs, memory, research
 
 HERE = Path(__file__).parent
@@ -98,6 +98,7 @@ def main() -> int:
     p.add_argument("--runs", type=int, default=1)
     p.add_argument("--only", default="", help="run tasks whose id starts with this")
     args = p.parse_args()
+    load_dotenv()
 
     tasks = [t for t in json.loads((HERE / "tasks.json").read_text()) if t["id"].startswith(args.only)]
     results = []

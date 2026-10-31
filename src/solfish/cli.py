@@ -10,7 +10,7 @@ import anthropic
 
 from .agent import format_args
 from .app import DEFAULT_SKILLS, build_agent
-from .config import Settings
+from .config import Settings, load_dotenv
 from .skills import content, open_db
 from .trace import Tracer
 
@@ -66,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("prompt", nargs="+")
     sub.add_parser("publish-due", help="publish scheduled posts that are due (for cron; no model)")
     args = p.parse_args(argv)
+    load_dotenv()
 
     if args.cmd == "publish-due":
         settings = Settings()

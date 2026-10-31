@@ -7,6 +7,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def load_dotenv(path: Path = Path(".env")) -> None:
+    """Read KEY=value lines from a .env file into the environment. Variables already set in the
+    shell win, and empty values count as unset. Called by the entry points, not on import, so
+    tests never pick up a real .env."""
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.removeprefix("export ").split("=", 1)
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if value:
+            os.environ.setdefault(key, value)
+
+
 def _home() -> Path:
     return Path(os.environ.get("SOLFISH_HOME", "~/.solfish")).expanduser()
 

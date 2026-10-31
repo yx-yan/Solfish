@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
+
 from conftest import FakeClient, message, text, tool_use
 
 from solfish.app import build_agent
-from solfish.config import Settings
+from solfish.config import Settings, load_dotenv
 
 
 def make(settings, client, **kw):
@@ -121,3 +123,14 @@ def test_fallbacks_only_when_enabled(tmp_path):
     agent, _ = make(settings, client)
     agent.run("hi")
     assert client.requests[0]["fallbacks"] == "default"
+
+
+def test_load_dotenv(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text('# comment\nA_KEY=from-file\nexport B_KEY="quoted"\nC_KEY=\nD_KEY=x=y\nSHELL_KEY=file\n')
+    monkeypatch.setattr(os, "environ", {"SHELL_KEY": "shell"})  # restored after the test
+    load_dotenv(env)
+    assert os.environ["A_KEY"] == "from-file" and os.environ["B_KEY"] == "quoted"
+    assert "C_KEY" not in os.environ  # empty means unset
+    assert os.environ["D_KEY"] == "x=y"
+    assert os.environ["SHELL_KEY"] == "shell"  # the shell wins
