@@ -1,4 +1,4 @@
-"""The agent loop, written by hand on the Messages API.
+"""The agent loop, written by hand on the Anthropic Messages API (served by DeepSeek by default).
 
     user message -> model -> (tool calls -> tool results -> model)* -> final answer
 
@@ -103,7 +103,7 @@ class Agent:
         pending = [b for b in self.messages[-1]["content"] if b.type == "tool_use"]
         if pending:
             self.messages.append({"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": b.id, "content": "Interrupted by the user.",
+                {"type": "tool_result", "tool_use_id": b.id, "content": "Error: Interrupted by the user.",
                  "is_error": True}
                 for b in pending
             ]})
@@ -121,11 +121,13 @@ class Agent:
             # Auto-cache the whole prefix: each loop step re-reads the previous step from cache.
             cache_control={"type": "ephemeral"},
         )
+        started = time.monotonic()
         if s.fallbacks:
             kwargs["betas"] = ["server-side-fallback-2026-07-01"]
             kwargs["fallbacks"] = "default"
-        started = time.monotonic()
-        response = self.client.beta.messages.create(**kwargs)
+            response = self.client.beta.messages.create(**kwargs)
+        else:
+            response = self.client.messages.create(**kwargs)
         usage = usage_dict(response.usage)
         self.emit(
             "llm_call",
@@ -160,10 +162,11 @@ class Agent:
             output=content,
             duration_s=round(time.monotonic() - started, 3),
         )
+        # DeepSeek ignores is_error, so the content itself has to say it failed.
         return {
             "type": "tool_result",
             "tool_use_id": call.id,
-            "content": content,
+            "content": f"Error: {content}" if result.is_error else content,
             "is_error": result.is_error,
         }
 

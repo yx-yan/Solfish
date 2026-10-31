@@ -83,10 +83,10 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = agent.run(text)
         except anthropic.AuthenticationError:
-            print(f"{RED}No valid credentials. Set ANTHROPIC_API_KEY or run `ant auth login`.{RESET}")
+            print(f"{RED}No valid credentials. Set DEEPSEEK_API_KEY.{RESET}")
             raise SystemExit(1) from None
         except anthropic.APIConnectionError:
-            print(f"{RED}Network error talking to the Claude API.{RESET}")
+            print(f"{RED}Network error talking to the model API.{RESET}")
             return
         except anthropic.APIStatusError as e:
             print(f"{RED}API error {e.status_code}: {e.message}{RESET}")

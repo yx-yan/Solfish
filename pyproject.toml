@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "solfish"
 version = "0.1.0"
-description = "A general-purpose personal agent built from scratch on the Claude API."
+description = "A general-purpose personal agent built from scratch on the Anthropic Messages API (DeepSeek by default)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

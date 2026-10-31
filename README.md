@@ -1,6 +1,6 @@
 # 🐟 Solfish
 
-**Solve + fish.** A general-purpose personal agent, built from scratch on the Claude API.
+**Solve + fish.** A general-purpose personal agent, built from scratch on the Anthropic Messages API, running on DeepSeek by default.
 
 Solfish is the agent I use day to day. Its core is a hand-written agent loop with no agent
 framework: tool calling, approval gates, long-term memory, tracing and evals are all in this
@@ -36,7 +36,7 @@ you › I just applied to Acme for the AI Engineer role, and Globex invited me t
 ```mermaid
 flowchart LR
     U[User / CLI] -->|message| L[Agent loop]
-    L -->|system + tools + history| M[(Claude API)]
+    L -->|system + tools + history| M[(DeepSeek API<br/>Anthropic format)]
     M -->|tool_use| L
     L -->|validate + approve| R[Tool registry]
     R --> S1[core: files, clock]
@@ -53,7 +53,7 @@ flowchart LR
 | Piece | File | What it shows |
 |---|---|---|
 | Agent loop | [`agent.py`](src/solfish/agent.py) | Every `stop_reason` handled (`tool_use`, `pause_turn`, `refusal`, `max_tokens`); step limit; append-only history |
-| Tools | [`tools/`](src/solfish/tools/) | One Pydantic model per tool gives both the JSON Schema and input validation; failures go back to the model as `is_error` results |
+| Tools | [`tools/`](src/solfish/tools/) | One Pydantic model per tool gives both the JSON Schema and input validation; failures go back to the model as `Error:` results |
 | Skills | [`skills/`](src/solfish/skills/) | Tools + instructions bundled per capability; the core knows nothing about job hunting |
 | Memory | [`skills/memory.py`](src/solfish/skills/memory.py) | Persistent notes; recent ones in the system prompt, older ones searchable |
 | Safety | `needs_approval` flag | Writes and deletes wait for a human `y` |
@@ -64,7 +64,9 @@ Design decisions and trade-offs are written up in [`docs/design.md`](docs/design
 
 ## Quick start
 
-Requires Python 3.11+ and Claude API credentials (`ANTHROPIC_API_KEY`, or `ant auth login`).
+Requires Python 3.11+ and a DeepSeek API key (`DEEPSEEK_API_KEY`). Solfish uses DeepSeek's
+Anthropic-compatible endpoint, so switching back to Claude is only environment variables
+(see `.env.example`).
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate

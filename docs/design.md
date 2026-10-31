@@ -75,10 +75,20 @@ prompt or tool change can be judged on numbers.
 
 ## 9. Model settings
 
-- `claude-opus-5-5` with adaptive thinking (summarized thinking is shown in the CLI), effort
-  `high` by default and configurable.
-- Server-side refusal fallback (`fallbacks: "default"`): if the main model declines, the API
-  retries on another model in the same call. The CLI says when this happened.
+- **DeepSeek by default, in Anthropic format.** `deepseek-flash` is the best price/quality
+  for daily use (about $0.30 / $1.20 per million input / output tokens, cache hits $0.006).
+  DeepSeek serves an Anthropic-compatible endpoint, so the loop keeps the anthropic SDK and
+  message format, and moving to `deepseek-v4-pro` or back to Claude is a config change
+  (`SOLFISH_MODEL`, `SOLFISH_BASE_URL`), not a rewrite.
+- Thinking is on with effort `high` (configurable). With tools, DeepSeek requires thinking to
+  be sent back unchanged, which the append-only history already does.
+- **Compatibility gaps, handled in the loop.** DeepSeek ignores `tool_result.is_error`, so a
+  failed tool's content also starts with `Error:`; otherwise the model could read an error as
+  a normal result. It ignores `cache_control` too, but caches prefixes automatically, so the
+  layout in section 3 still pays off and shows up as `cache_read` tokens.
+- Server-side refusal fallback (`fallbacks: "default"`) is a Claude beta, off by default. With
+  `fallbacks=True` the loop uses the beta endpoint, and if the main model declines, the API
+  retries on another model in the same call.
 - Non-streaming requests with `max_tokens=16000`; streaming is on the roadmap for the chat UI.
 
 ## 10. Résumé: the source repo is read-only

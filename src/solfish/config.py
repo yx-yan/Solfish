@@ -29,12 +29,20 @@ class Smtp:
 
 @dataclass(frozen=True)
 class Settings:
-    model: str = field(default_factory=lambda: os.environ.get("SOLFISH_MODEL", "claude-opus-5-5"))
+    model: str = field(default_factory=lambda: os.environ.get("SOLFISH_MODEL", "deepseek-flash"))
+    # DeepSeek's Anthropic-compatible endpoint, so the same SDK and message format work.
+    # Set SOLFISH_BASE_URL=https://api.anthropic.com to run on Claude instead.
+    base_url: str = field(
+        default_factory=lambda: os.environ.get("SOLFISH_BASE_URL", "https://api.deepseek.com/anthropic")
+    )
+    # Unset falls back to ANTHROPIC_API_KEY, which is what you want on Claude.
+    api_key: str | None = field(default_factory=lambda: os.environ.get("DEEPSEEK_API_KEY"))
     effort: str = field(default_factory=lambda: os.environ.get("SOLFISH_EFFORT", "high"))
     max_tokens: int = 16000
     max_steps: int = field(default_factory=lambda: int(os.environ.get("SOLFISH_MAX_STEPS", "20")))
     # Server-side refusal fallback: if the main model declines, the API retries on another model.
-    fallbacks: bool = True
+    # Claude only; DeepSeek has no such beta.
+    fallbacks: bool = False
     home: Path = field(default_factory=_home)
     # The LaTeX résumé repo the resume skill tailors from (read-only; builds happen in a copy).
     resume_dir: Path | None = field(default_factory=lambda: _optional_path("SOLFISH_RESUME_DIR"))

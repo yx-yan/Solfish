@@ -1,4 +1,4 @@
-"""Run the eval suite against the real Claude API.
+"""Run the eval suite against the real model API (DeepSeek by default).
 
 Each task gets a fresh, empty Solfish home, optional setup SQL, one prompt, and deterministic
 checks on the end state. Prints pass rate, steps, tokens and cost; saves full results to

@@ -13,7 +13,10 @@ from pathlib import Path
 from typing import Any
 
 # USD per million tokens: (input, output, cache read, 5-minute cache write).
+# DeepSeek: peak-hour prices (off-peak is half); its caching is automatic, so no write cost.
 PRICES: dict[str, tuple[float, float, float, float]] = {
+    "deepseek-flash": (0.30, 1.20, 0.006, 0.0),
+    "deepseek-v4-pro": (1.32, 3.96, 0.044, 0.0),
     "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00),
     "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50),
 }

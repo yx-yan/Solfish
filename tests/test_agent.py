@@ -3,6 +3,7 @@ from __future__ import annotations
 from conftest import FakeClient, message, text, tool_use
 
 from solfish.app import build_agent
+from solfish.config import Settings
 
 
 def make(settings, client, **kw):
@@ -55,6 +56,7 @@ def test_bad_arguments_become_error_result_not_crash(settings):
     agent.run("track Acme")
     tool_result = client.requests[1]["messages"][-1]["content"][0]
     assert tool_result["is_error"] and "role" in tool_result["content"]
+    assert tool_result["content"].startswith("Error: ")  # DeepSeek ignores is_error
 
 
 def test_side_effecting_tool_respects_approval(settings):
@@ -106,8 +108,16 @@ def test_request_shape(settings):
     agent, _ = make(settings, client)
     agent.run("hi")
     req = client.requests[0]
-    assert req["model"] == "claude-opus-5-5"
+    assert req["model"] == "deepseek-flash"
     assert req["thinking"]["type"] == "adaptive"
-    assert req["fallbacks"] == "default"
+    assert "fallbacks" not in req
     names = [t["name"] for t in req["tools"]]
     assert names == sorted(names)  # deterministic order keeps the prompt cache valid
+
+
+def test_fallbacks_only_when_enabled(tmp_path):
+    settings = Settings(home=tmp_path / "home", max_steps=5, fallbacks=True)
+    client = FakeClient(message(text("hi")))
+    agent, _ = make(settings, client)
+    agent.run("hi")
+    assert client.requests[0]["fallbacks"] == "default"

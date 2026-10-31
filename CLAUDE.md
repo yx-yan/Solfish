@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-Solfish (solve + fish) is a general-purpose personal agent written from scratch on the Claude
-API, with no agent framework. It is both a tool I use daily and a public portfolio piece
+Solfish (solve + fish) is a general-purpose personal agent written from scratch on the Anthropic
+Messages API (served by DeepSeek by default), with no agent framework. It is both a tool I use daily and a public portfolio piece
 showing I understand how agents work, so code clarity and the docs matter as much as features.
 
 ## Commands
@@ -10,12 +10,13 @@ source .venv/bin/activate      # venv built from /opt/miniconda3/bin/python (3.1
 pip install -e ".[dev]"
 pytest                         # offline, uses tests/conftest.py FakeClient
 ruff check .
-solfish                        # chat (needs ANTHROPIC_API_KEY or `ant auth login`)
+solfish                        # chat (needs DEEPSEEK_API_KEY)
 python evals/run_evals.py      # live API, costs money: ask before running
 ```
 
 ## Layout
-- `src/solfish/agent.py`: the hand-written loop. Keep it append-only (never edit earlier messages)
+- `src/solfish/agent.py`: the hand-written loop. Keep it append-only (never edit earlier messages).
+  DeepSeek ignores `is_error`, so error results also start with `Error:`
 - `src/solfish/tools/`: `@tool(ParamsModel)` + `ToolRegistry`; tool failures return `is_error` results, never raise
 - `src/solfish/skills/`: one module per capability exposing `load(ctx) -> Skill`; register in `skills/__init__.py`
 - `src/solfish/app.py`: wiring + system prompt (stable cached block, then memory snapshot)

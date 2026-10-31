@@ -60,7 +60,7 @@ def build_agent(
     session = f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
     tracer = Tracer(settings.traces_dir / f"{session}.jsonl" if trace else None)
     agent = Agent(
-        client or anthropic.Anthropic(),
+        client or anthropic.Anthropic(base_url=settings.base_url, api_key=settings.api_key),
         registry,
         build_system(loaded, ctx.db),
         settings,
