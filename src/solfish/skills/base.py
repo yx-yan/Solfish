@@ -34,6 +34,7 @@ def slugify(name: str) -> str:
 
 def open_db(settings: Settings) -> sqlite3.Connection:
     settings.ensure_dirs()
-    db = sqlite3.connect(settings.db_path)
+    # Sessions run their turns on worker threads (one turn at a time per connection).
+    db = sqlite3.connect(settings.db_path, check_same_thread=False)
     db.row_factory = sqlite3.Row
     return db

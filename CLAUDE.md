@@ -11,6 +11,7 @@ pip install -e ".[dev]"
 pytest                         # offline, uses tests/conftest.py FakeClient
 ruff check .
 solfish                        # chat (needs DEEPSEEK_API_KEY)
+solfish serve --open           # local web UI on 127.0.0.1:8765
 python evals/run_evals.py      # live API, costs money: ask before running
 ```
 
@@ -19,6 +20,10 @@ python evals/run_evals.py      # live API, costs money: ask before running
   DeepSeek ignores `is_error`, so error results also start with `Error:`
 - `src/solfish/tools/`: `@tool(ParamsModel)` + `ToolRegistry`; tool failures return `is_error` results, never raise
 - `src/solfish/skills/`: one module per capability exposing `load(ctx) -> Skill`; register in `skills/__init__.py`
+- `src/solfish/session.py`: stored sessions, `SessionManager` (worker-thread turns, event fan-out,
+  approvals any channel can answer); channels (CLI, web, Telegram) sit on top of it
+- `src/solfish/server.py` + `src/solfish/web/`: FastAPI + SSE + plain JS, no build step. Model output
+  is untrusted in the page: never render its raw HTML, keep the CSP strict
 - `src/solfish/app.py`: wiring + system prompt (stable cached block, then memory snapshot)
 - `evals/tasks.json`: end-state checks (sql / tool_called / reply_contains_all / file_contains)
 - `docs/design.md`: design decisions; update it when a decision changes

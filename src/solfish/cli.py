@@ -10,8 +10,9 @@ from typing import Any
 import anthropic
 
 from .agent import format_args
-from .app import DEFAULT_SKILLS, build_agent
+from .app import DEFAULT_SKILLS, build_agent, new_session_id
 from .config import Settings, load_dotenv
+from .session import SessionStore
 from .skills import content, forms, open_db
 from .tools import ToolError
 from .trace import Tracer
@@ -57,15 +58,24 @@ def summary(tracer: Tracer) -> str:
     return line
 
 
+def resume_hint(session_id: str) -> str:
+    return f"resume: solfish --resume {session_id}"
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="solfish", description="Solfish personal agent")
     p.add_argument("--yes", action="store_true", help="approve every side-effecting tool call")
     p.add_argument("--skills", default=",".join(DEFAULT_SKILLS), help="comma-separated skills")
     p.add_argument("--quiet", action="store_true", help="hide thinking and tool calls")
+    p.add_argument("--resume", metavar="SESSION", help="continue a stored session (see `solfish sessions`)")
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("chat", help="interactive session (default)")
     ask = sub.add_parser("ask", help="one question, then exit")
     ask.add_argument("prompt", nargs="+")
+    sub.add_parser("sessions", help="list recent sessions (no model)")
+    srv = sub.add_parser("serve", help="local web UI on 127.0.0.1")
+    srv.add_argument("--port", type=int, default=8765)
+    srv.add_argument("--open", action="store_true", help="open it in the browser")
     sub.add_parser("publish-due", help="publish scheduled posts that are due (for cron; no model)")
     prof = sub.add_parser("profile", help="view or set form-filling details (no model)")
     prof.add_argument("action", choices=["list", "set"])
@@ -96,10 +106,39 @@ def main(argv: list[str] | None = None) -> int:
         print(forms.describe_profile(db))
         return 0
 
+    settings = Settings()
+    skills = tuple(s.strip() for s in args.skills.split(",") if s.strip())
+
+    if args.cmd == "serve":
+        try:
+            from .server import serve
+        except ImportError:
+            print(f"{RED}The web UI needs its extras: pip install -e \".[server]\"{RESET}")
+            return 1
+        return serve(settings, skills=skills, port=args.port, open_browser=args.open)
+
+    store = SessionStore(open_db(settings))
+
+    if args.cmd == "sessions":
+        for r in store.recent():
+            print(f"{r['id']}  {DIM}{r['updated_at']} {r['channel']:<8}{RESET} {r['title']}")
+        return 0
+
+    if args.resume:
+        if store.get(args.resume) is None:
+            p.error(f"no session {args.resume}; see `solfish sessions`")
+        session_id, history = args.resume, store.load(args.resume)
+    else:
+        session_id, history = new_session_id(), []
+        store.create(session_id, "cli")
+
     agent, tracer = build_agent(
-        skills=tuple(s.strip() for s in args.skills.split(",") if s.strip()),
+        settings,
+        skills=skills,
         approve=(lambda name, a: True) if args.yes else ask_approval,
         listeners=[] if args.quiet else [show],
+        session_id=session_id,
+        messages=history,
     )
 
     def turn(text: str) -> None:
@@ -114,11 +153,13 @@ def main(argv: list[str] | None = None) -> int:
         except anthropic.APIStatusError as e:
             print(f"{RED}API error {e.status_code}: {e.message}{RESET}")
             return
+        finally:
+            store.sync(session_id, agent.messages)
         print(f"\n🐟 {result.text}\n")
 
     if args.cmd == "ask":
         turn(" ".join(args.prompt))
-        print(f"{DIM}{summary(tracer)}{RESET}")
+        print(f"{DIM}{summary(tracer)}\n{resume_hint(session_id)}{RESET}")
         return 0
 
     print(f"{DIM}Solfish — Ctrl-D or /exit to quit.{RESET}")
@@ -134,8 +175,9 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 turn(text)
             except KeyboardInterrupt:
+                store.sync(session_id, agent.messages)
                 print(f"\n{DIM}(interrupted){RESET}")
-    print(f"{DIM}{summary(tracer)}{RESET}")
+    print(f"{DIM}{summary(tracer)}\n{resume_hint(session_id)}{RESET}")
     return 0
 
 
