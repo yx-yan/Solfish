@@ -57,6 +57,8 @@ flowchart LR
 | Agent loop | [`agent.py`](src/solfish/agent.py) | Every `stop_reason` handled (`tool_use`, `pause_turn`, `refusal`, `max_tokens`); step limit; append-only history |
 | Tools | [`tools/`](src/solfish/tools/) | One Pydantic model per tool gives both the JSON Schema and input validation; failures go back to the model as `Error:` results |
 | Skills | [`skills/`](src/solfish/skills/) | Tools + instructions bundled per capability; the core knows nothing about job hunting |
+| Sessions | [`session.py`](src/solfish/session.py) | Conversations stored append-only and resumable; one manager runs turns for every channel and routes approvals from any of them |
+| Web UI | [`server.py`](src/solfish/server.py), [`web/`](src/solfish/web/) | FastAPI + SSE + plain JS: live thinking and tool calls, approval buttons, workspace downloads; model output treated as hostile (no raw HTML, strict CSP) |
 | Memory | [`skills/memory.py`](src/solfish/skills/memory.py) | Persistent notes; recent ones in the system prompt, older ones searchable |
 | Safety | `needs_approval` flag | Writes and deletes wait for a human `y` |
 | Observability | [`trace.py`](src/solfish/trace.py) | JSONL trace per session: every model call, tool call, token count, cache hit and dollar cost |
@@ -77,6 +79,9 @@ pip install -e ".[dev]"
 solfish                                    # chat
 solfish ask "what applications are still active?"
 solfish --skills core,memory               # load only some skills
+solfish sessions                           # recent conversations
+solfish serve --open                       # local web UI at 127.0.0.1:8765 (pip install -e ".[server]")
+solfish --resume 20261101-152012-ab12cd    # pick one up where it stopped
 solfish publish-due                        # publish scheduled posts that are due (run from cron)
 ```
 
@@ -122,7 +127,11 @@ tools, actually does the right thing.
 - [ ] travel: city trip planning: research travel guides, book tickets (with approval), build a day-by-day itinerary
 - [ ] MCP client: load tools from any MCP server as a skill
 - [ ] Context management for long sessions (compaction)
+- [x] Sessions: stored, resumable conversations; approvals any channel can answer
+- [x] Local web UI (live tool calls over SSE, approval buttons, workspace downloads)
+- [ ] Streaming replies in the web UI
 - [ ] Telegram front end, so it's reachable from my phone
+- [ ] macOS menu bar app with a quick-ask hotkey
 - [ ] Scheduled runs (morning brief: deadlines, follow-ups)
 
 ## License

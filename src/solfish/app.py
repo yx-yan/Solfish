@@ -39,6 +39,10 @@ def build_system(skills: list[Skill], db: sqlite3.Connection) -> list[dict[str, 
     return blocks
 
 
+def new_session_id() -> str:
+    return f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+
+
 def build_agent(
     settings: Settings | None = None,
     *,
@@ -47,7 +51,10 @@ def build_agent(
     approve: Approver | None = None,
     listeners: list[Listener] | None = None,
     trace: bool = True,
+    session_id: str | None = None,
+    messages: list[dict[str, Any]] | None = None,
 ) -> tuple[Agent, Tracer]:
+    """`session_id` names the trace file; `messages` restores a stored session's history."""
     settings = settings or Settings()
     ctx = Context(settings=settings, db=open_db(settings))
 
@@ -57,7 +64,7 @@ def build_agent(
     loaded = [SKILLS[name](ctx) for name in skills]
     registry = ToolRegistry([t for s in loaded for t in s.tools])
 
-    session = f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+    session = session_id or new_session_id()
     tracer = Tracer(settings.traces_dir / f"{session}.jsonl" if trace else None)
     agent = Agent(
         client or anthropic.Anthropic(base_url=settings.base_url, api_key=settings.api_key),
@@ -67,4 +74,5 @@ def build_agent(
         approve=approve,
         listeners=[tracer, *(listeners or [])],
     )
+    agent.messages = list(messages or [])
     return agent, tracer

