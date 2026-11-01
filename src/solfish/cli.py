@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 from typing import Any
 
@@ -11,7 +12,8 @@ import anthropic
 from .agent import format_args
 from .app import DEFAULT_SKILLS, build_agent
 from .config import Settings, load_dotenv
-from .skills import content, open_db
+from .skills import content, forms, open_db
+from .tools import ToolError
 from .trace import Tracer
 
 DIM, CYAN, RED, RESET = "\033[2m", "\033[36m", "\033[31m", "\033[0m"
@@ -65,6 +67,11 @@ def main(argv: list[str] | None = None) -> int:
     ask = sub.add_parser("ask", help="one question, then exit")
     ask.add_argument("prompt", nargs="+")
     sub.add_parser("publish-due", help="publish scheduled posts that are due (for cron; no model)")
+    prof = sub.add_parser("profile", help="view or set form-filling details (no model)")
+    prof.add_argument("action", choices=["list", "set"])
+    prof.add_argument("key", nargs="?")
+    prof.add_argument("--sensitive", action="store_true",
+                      help="hide the value from the model; it is read here, not typed into chat")
     args = p.parse_args(argv)
     load_dotenv()
 
@@ -72,6 +79,21 @@ def main(argv: list[str] | None = None) -> int:
         settings = Settings()
         for line in content.publish_due(settings, open_db(settings)) or ["Nothing due."]:
             print(line)
+        return 0
+
+    if args.cmd == "profile":
+        db = open_db(Settings())
+        db.executescript(forms.SCHEMA)
+        if args.action == "set":
+            if not args.key:
+                p.error("profile set needs a key, e.g. solfish profile set passport_no --sensitive")
+            value = getpass.getpass(f"{args.key}: ") if args.sensitive else input(f"{args.key}: ")
+            try:
+                forms.set_value(db, args.key, value, args.sensitive)
+            except ToolError as e:
+                print(f"{RED}{e}{RESET}")
+                return 1
+        print(forms.describe_profile(db))
         return 0
 
     agent, tracer = build_agent(
