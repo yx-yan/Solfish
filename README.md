@@ -59,6 +59,7 @@ flowchart LR
 | Skills | [`skills/`](src/solfish/skills/) | Tools + instructions bundled per capability; the core knows nothing about job hunting |
 | Sessions | [`session.py`](src/solfish/session.py) | Conversations stored append-only and resumable; one manager runs turns for every channel and routes approvals from any of them |
 | Web UI | [`server.py`](src/solfish/server.py), [`web/`](src/solfish/web/) | FastAPI + SSE + plain JS: live thinking and tool calls, approval buttons, workspace downloads; model output treated as hostile (no raw HTML, strict CSP) |
+| Telegram | [`channels/telegram.py`](src/solfish/channels/telegram.py) | Long-polling bot on the raw Bot API: one live "working" message per turn, Allow/Deny buttons for approvals from any session, answers one chat id only |
 | Memory | [`skills/memory.py`](src/solfish/skills/memory.py) | Persistent notes; recent ones in the system prompt, older ones searchable |
 | Safety | `needs_approval` flag | Writes and deletes wait for a human `y` |
 | Observability | [`trace.py`](src/solfish/trace.py) | JSONL trace per session: every model call, tool call, token count, cache hit and dollar cost |
@@ -81,6 +82,7 @@ solfish ask "what applications are still active?"
 solfish --skills core,memory               # load only some skills
 solfish sessions                           # recent conversations
 solfish serve --open                       # local web UI at 127.0.0.1:8765 (pip install -e ".[server]")
+                                           # + the Telegram bot, if SOLFISH_TELEGRAM_TOKEN is set
 solfish --resume 20261101-152012-ab12cd    # pick one up where it stopped
 solfish publish-due                        # publish scheduled posts that are due (run from cron)
 ```
@@ -130,7 +132,7 @@ tools, actually does the right thing.
 - [x] Sessions: stored, resumable conversations; approvals any channel can answer
 - [x] Local web UI (live tool calls over SSE, approval buttons, workspace downloads)
 - [ ] Streaming replies in the web UI
-- [ ] Telegram front end, so it's reachable from my phone
+- [x] Telegram front end, so it's reachable from my phone
 - [ ] macOS menu bar app with a quick-ask hotkey
 - [ ] Scheduled runs (morning brief: deadlines, follow-ups)
 

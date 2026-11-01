@@ -136,7 +136,7 @@ and the instructions require arXiv ids for every claim about a paper.
 
 Arrival cards and sign-up forms are JavaScript apps with dynamic dropdowns, so plain HTTP is
 not enough: the forms skill drives a visible Chromium through Playwright (an optional
-dependency, so the core stays two packages). The user watches it fill, and its persistent
+dependency, so the core stays small). The user watches it fill, and its persistent
 browser profile in `~/.solfish/browser/` keeps logins between sessions.
 
 The model works with field numbers, not CSS selectors. `read_form` tags each visible field with
@@ -217,3 +217,31 @@ stop that:
 
 Replies arrive whole when the turn ends: requests aren't streamed yet (section 9). Thinking and
 tool calls already appear as they happen, which is where the waiting is.
+
+## 16. Telegram: the phone as a channel
+
+Telegram is the channel for when I'm away from the laptop, so it has to work without a public
+address. That means long polling (`getUpdates`), not a webhook. The bot runs inside
+`solfish serve` as one more `SessionManager` subscriber. That's what lets it approve a request
+from a session started in the browser: approval requests from **every** session go to the phone,
+labelled with the session they come from. Everything else follows the session the chat is
+currently on.
+
+- **No bot framework.** Solfish uses a handful of Bot API methods. Calling them with httpx2 is
+  about as much code as configuring a framework, and it stays readable. Errors never include the
+  exception text, because the request URL contains the bot token.
+- **One chat id.** This bot can write files and send email, so it answers exactly one chat and
+  ignores everyone else silently, buttons included. With no id configured it only tells the
+  sender their id, so setup needs no other tool.
+- **One message per turn.** A turn is a single "Working…" message, edited as each tool runs and
+  closed with the step count, followed by the answer. Edits are rate-limited much less than new
+  messages, and the chat doesn't fill up with tool noise. Rendering runs on its own thread, so a
+  slow Telegram call never holds up the agent.
+- **Plain text.** Replies are sent without `parse_mode`. Telegram's MarkdownV2 rejects a whole
+  message over one unescaped character, and an answer that fails to send is worse than one that
+  shows raw `**`. Long answers are split at line breaks under the 4096-character limit.
+- **Messages go through Telegram's servers.** Sensitive form values still never enter the chat
+  (section 13), so nothing changes there. The forms skill opens its browser on the Mac, so from
+  the phone it's only good for "fill it now, check it when I'm home".
+- `publish-due` (from cron) also reports what it published to the chat, so scheduled posts no
+  longer go out silently.

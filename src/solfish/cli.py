@@ -11,6 +11,7 @@ import anthropic
 
 from .agent import format_args
 from .app import DEFAULT_SKILLS, build_agent, new_session_id
+from .channels import telegram
 from .config import Settings, load_dotenv
 from .session import SessionStore
 from .skills import content, forms, open_db
@@ -87,8 +88,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "publish-due":
         settings = Settings()
-        for line in content.publish_due(settings, open_db(settings)) or ["Nothing due."]:
-            print(line)
+        lines = content.publish_due(settings, open_db(settings))
+        print("\n".join(lines) or "Nothing due.")
+        if lines:
+            try:
+                telegram.notify(settings, "Scheduled posts:\n" + "\n".join(lines))
+            except telegram.TelegramError as e:
+                print(f"{RED}Telegram: {e}{RESET}")
         return 0
 
     if args.cmd == "profile":

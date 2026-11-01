@@ -68,6 +68,12 @@ class Settings:
         default_factory=lambda: os.environ.get("SOLFISH_RESUME_MAIN", "resume-ntu-en.tex")
     )
     smtp: Smtp = field(default_factory=Smtp)
+    # Telegram front end (runs inside `solfish serve`). Only this chat id is answered; leave it
+    # unset at first and the bot replies with yours.
+    telegram_token: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_TELEGRAM_TOKEN"))
+    telegram_chat_id: int | None = field(
+        default_factory=lambda: int(v) if (v := os.environ.get("SOLFISH_TELEGRAM_CHAT_ID")) else None
+    )
 
     @property
     def db_path(self) -> Path:

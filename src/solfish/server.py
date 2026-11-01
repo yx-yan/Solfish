@@ -243,10 +243,17 @@ def serve(settings: Settings, *, skills: tuple[str, ...] = DEFAULT_SKILLS, port:
           open_browser: bool = False) -> int:
     import uvicorn
 
+    from .channels import telegram
+
     token = load_token(settings)
-    app = create_app(SessionManager(settings, skills=skills), token)
+    manager = SessionManager(settings, skills=skills)
+    app = create_app(manager, token)
     url = f"http://127.0.0.1:{port}/?token={token}"
-    print(f"Solfish is at {url}\nCtrl-C to stop.", flush=True)  # flush: stdout may be a log file
+    print(f"Solfish is at {url}")
+    if telegram.start(manager, settings):
+        print("Telegram bot is polling." if settings.telegram_chat_id else
+              "Telegram bot is polling, but SOLFISH_TELEGRAM_CHAT_ID is unset: message it to get yours.")
+    print("Ctrl-C to stop.", flush=True)  # flush: stdout may be a log file
     if open_browser:
         webbrowser.open(url)
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
