@@ -54,7 +54,8 @@ class EventHub:
 
     def __init__(self) -> None:
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.queues: set[asyncio.Queue[str]] = set()
+        self.queues: set[asyncio.Queue[str | None]] = set()
+        self.closing = False
 
     def __call__(self, session_id: str, kind: str, data: dict[str, Any]) -> None:
         if self.loop is None:
@@ -66,16 +67,29 @@ class EventHub:
             except RuntimeError:  # loop already closed: the server is shutting down
                 return
 
+    def close(self) -> None:
+        """End every open stream. The server waits for open connections before it exits, and an
+        event stream never finishes on its own, so without this Ctrl-C hangs while a tab is open.
+        Called from the signal handler; the browser reconnects once the server is back."""
+        self.closing = True
+        if self.loop is not None:
+            for q in list(self.queues):
+                self.loop.call_soon_threadsafe(q.put_nowait, None)
+
     async def stream(self, keepalive_s: float = 15.0) -> AsyncIterator[str]:
-        q: asyncio.Queue[str] = asyncio.Queue()
+        q: asyncio.Queue[str | None] = asyncio.Queue()
         self.queues.add(q)
         try:
             yield ": connected\n\n"
-            while True:
+            while not self.closing:
                 try:
-                    yield f"data: {await asyncio.wait_for(q.get(), keepalive_s)}\n\n"
+                    event = await asyncio.wait_for(q.get(), keepalive_s)
                 except TimeoutError:
                     yield ": ping\n\n"  # keeps proxies and the browser from timing out
+                    continue
+                if event is None:
+                    return
+                yield f"data: {event}\n\n"
         finally:
             self.queues.discard(q)
 
@@ -123,6 +137,7 @@ def create_app(manager: SessionManager, token: str) -> FastAPI:
         yield
 
     app = FastAPI(title="Solfish", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app.state.hub = hub
     app.mount("/static", StaticFiles(directory=WEB), name="static")
     workspace = manager.settings.workspace.resolve()
 
@@ -256,5 +271,11 @@ def serve(settings: Settings, *, skills: tuple[str, ...] = DEFAULT_SKILLS, port:
     print("Ctrl-C to stop.", flush=True)  # flush: stdout may be a log file
     if open_browser:
         webbrowser.open(url)
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+
+    class Server(uvicorn.Server):
+        def handle_exit(self, sig: int, frame: Any) -> None:
+            app.state.hub.close()
+            super().handle_exit(sig, frame)
+
+    Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")).run()
     return 0

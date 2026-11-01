@@ -101,6 +101,21 @@ def test_event_hub_carries_events_from_agent_threads():
     assert not hub.queues  # a closed connection unsubscribes
 
 
+def test_closing_the_hub_ends_open_streams():
+    hub = EventHub()
+
+    async def main():
+        hub.loop = asyncio.get_running_loop()
+        stream = hub.stream()
+        await anext(stream)
+        hub.close()  # what Ctrl-C does
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(anext(stream), 5)
+
+    asyncio.run(main())
+    assert not hub.queues
+
+
 @pytest.mark.parametrize("path", ["/static/app.js", "/static/style.css"])
 def test_static_assets_are_served(settings, path):
     _, web = make(settings)
