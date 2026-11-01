@@ -6,7 +6,7 @@ from datetime import datetime
 import pytest
 
 from solfish.config import Smtp
-from solfish.skills import SKILLS, Context, content, open_db, research, resume
+from solfish.skills import SKILLS, Context, content, forms, open_db, research, resume
 from solfish.tools import ToolRegistry
 
 
@@ -218,3 +218,172 @@ def test_paper_library(tools, arxiv):
     listed = tools.execute("list_papers", {"query": "critique"}).content
     assert "Self-RAG" in listed and "| read" in listed and "for EE6405" in listed
     assert tools.execute("list_papers", {"status": "to_read"}).content == "No papers match."
+
+
+# --- forms ----------------------------------------------------------------------------------
+
+class FakeField:
+    def __init__(self, type, label, options=(), readonly=False):
+        self.type, self.label, self.options, self.readonly = type, label, list(options), readonly
+        self.value = "false" if type in ("checkbox", "radio") else ""
+
+    def fill(self, value, timeout=None):
+        if self.readonly:
+            raise TimeoutError(f'Locator.fill: Timeout exceeded.\nCall log:\n  - fill("{value}")')
+        self.value = value
+
+    def click(self, timeout=None):
+        self.clicks = getattr(self, "clicks", 0) + 1
+
+    def set_checked(self, checked):
+        self.value = str(checked).lower()
+
+    def select_option(self, value):
+        self.value = next(t for t, v in self.options if v == value)
+
+    def evaluate(self, js, arg=None):
+        if js is forms.SET_JS:
+            self.value = arg
+            return None
+        return self.options if js is forms.OPTIONS_JS else self.value
+
+
+class FakePage:
+    url = "https://form.test/arrival"
+
+    def __init__(self):
+        self.fields = [
+            FakeField("text", "Full Name"),
+            FakeField("text", "Passport No."),
+            FakeField("select", "Nationality", [("Select", ""), ("CHINA", "CHN"), ("SINGAPORE", "SGP")]),
+            FakeField("checkbox", "I declare the above is true"),
+            FakeField("text", "DD/MM/YYYY", readonly=True),
+            FakeField("button", "Next"),
+            FakeField("button", "Submit"),
+            FakeField("button", "Hantar / 提交"),
+        ]
+        self.visited = []
+
+    def is_closed(self):
+        return False
+
+    def goto(self, url, wait_until):
+        self.visited.append(url)
+
+    def title(self):
+        return "Arrival Card"
+
+    def wait_for_load_state(self, state):
+        pass
+
+    def evaluate(self, js):
+        assert js is forms.READ_JS
+        return [{"ref": i, "type": f.type, "label": f.label, "name": "", "required": True,
+                 "readonly": f.readonly,
+                 "value": f.value, "options": [t for t, _ in f.options]} for i, f in enumerate(self.fields)]
+
+    def locator(self, selector):
+        return self.fields[int(selector.split('"')[1])]
+
+
+@pytest.fixture
+def browser(monkeypatch):
+    page = FakePage()
+    monkeypatch.setattr(forms, "open_browser", lambda settings: page)
+    return page
+
+
+def test_profile_masks_sensitive_values(tools, settings):
+    tools.execute("set_profile", {"key": "full_name", "value": "Yan Yuxuan"})
+    tools.execute("set_profile", {"key": "passport_no", "value": "E12345678", "sensitive": True})
+    listed = tools.execute("list_profile", {}).content
+    assert "full_name: Yan Yuxuan" in listed and "{{passport_no}}" in listed
+    assert "E12345678" not in listed
+    assert tools.execute("set_profile", {"key": "Passport No", "value": "x"}).is_error
+
+
+def test_fill_form_substitutes_placeholders_locally(tools, browser):
+    tools.execute("set_profile", {"key": "full_name", "value": "Yan Yuxuan"})
+    tools.execute("set_profile", {"key": "passport_no", "value": "E12345678", "sensitive": True})
+    assert "read_form" in tools.execute("fill_form", {"fields": [{"ref": 0, "value": "x"}]}).content
+    tools.execute("open_page", {"url": "https://form.test/arrival"})
+    form = tools.execute("read_form", {}).content
+    assert "[2] Nationality (select, required)" in form and "CHINA | SINGAPORE" in form
+
+    r = tools.execute("fill_form", {"fields": [
+        {"ref": 0, "value": "{{full_name}}"},
+        {"ref": 1, "value": "{{passport_no}}"},
+        {"ref": 2, "value": "china"},
+        {"ref": 3, "value": "true"},
+    ]}).content
+    assert [f.value for f in browser.fields][:4] == ["Yan Yuxuan", "E12345678", "CHINA", "true"]
+    assert "E12345678" not in r and "*** (from {{passport_no}})" in r
+    assert "E12345678" not in tools.execute("read_form", {}).content
+
+
+def test_fill_form_reports_bad_values_per_field(tools, browser):
+    tools.execute("open_page", {"url": "https://form.test/arrival"})
+    tools.execute("read_form", {})
+    r = tools.execute("fill_form", {"fields": [
+        {"ref": 2, "value": "Singapor"}, {"ref": 0, "value": "{{nickname}}"}, {"ref": 9, "value": "x"},
+        {"ref": 3, "value": "yes"},
+    ]}).content
+    assert "closest: SINGAPORE" in r and "No profile value for nickname" in r and "[9] Error" in r
+    assert browser.fields[3].value == "true"  # one bad field doesn't stop the rest
+
+
+def test_open_page_rejects_other_schemes(tools, browser):
+    assert tools.execute("open_page", {"url": "javascript:alert(1)"}).is_error
+    assert tools.execute("read_form", {}).is_error  # nothing open yet
+
+
+def test_sensitive_dates_are_reformatted_and_never_echoed(tools, browser):
+    tools.execute("set_profile", {"key": "date_of_birth", "value": "1999-12-31", "sensitive": True})
+    tools.execute("open_page", {"url": "https://form.test/arrival"})
+    assert "(text, required, readonly)" in tools.execute("read_form", {}).content
+
+    r = tools.execute("fill_form", {"fields": [{"ref": 4, "value": "{{date_of_birth|DD/MM/YYYY}}"}]})
+    assert browser.fields[4].value == "31/12/1999"  # read-only date picker set via script
+    assert "31/12/1999" not in r.content and "1999" not in tools.execute("read_form", {}).content
+
+    # A browser error that echoes the typed value must not leak it either.
+    browser.fields[1].readonly = True
+    r = tools.execute("fill_form", {"fields": [{"ref": 1, "value": "{{date_of_birth}}"}]}).content
+    assert "TimeoutError" in r and "1999" not in r
+    r = tools.execute("fill_form", {"fields": [{"ref": 0, "value": "{{date_of_birth|DD/MM/YYYY}}"}]}).content
+    assert "1999" not in r
+
+
+def test_date_format_needs_iso_value(tools, browser):
+    tools.execute("set_profile", {"key": "birthday", "value": "23 April", "sensitive": True})
+    tools.execute("open_page", {"url": "https://form.test/arrival"})
+    tools.execute("read_form", {})
+    r = tools.execute("fill_form", {"fields": [{"ref": 4, "value": "{{birthday|DD/MM/YYYY}}"}]}).content
+    assert "YYYY-MM-DD" in r and "April" not in r
+
+
+def test_click_button_moves_on_but_never_submits(tools, browser):
+    tools.execute("open_page", {"url": "https://form.test/arrival"})
+    form = tools.execute("read_form", {}).content
+    assert "Buttons (click_button):\n[5] Next\n[6] Submit (final" in form
+
+    r = tools.execute("click_button", {"ref": 5})
+    assert not r.is_error and browser.fields[5].clicks == 1 and "read_form again" in r.content
+    assert tools.execute("click_button", {"ref": 5}).is_error  # numbers are stale after a click
+
+    tools.execute("read_form", {})
+    for ref in (6, 7):
+        r = tools.execute("click_button", {"ref": ref})
+        assert r.is_error and "only the user" in r.content
+        assert not hasattr(browser.fields[ref], "clicks")
+    assert tools.execute("click_button", {"ref": 0}).is_error  # a text field, not a button
+    assert tools.execute("fill_form", {"fields": [{"ref": 5, "value": "x"}]}).content.count("button") == 2
+
+
+@pytest.mark.parametrize("text, final", [
+    ("Submit", True), ("submitRegistration", True), ("Confirm & Pay", True), ("Reset", True),
+    ("提交申请", True), ("Hantar", True), ("Next", False), ("Continue", False),
+    ("Add another traveller", False), ("Design options", False),
+])
+def test_final_button_detection(text, final):
+    assert forms.is_final({"label": text, "name": ""}) is final

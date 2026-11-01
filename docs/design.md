@@ -132,3 +132,33 @@ paper would be truncated by the 20k result limit, and paging lets the model read
 it needs. The library is a table, so "what have I read about X" is a query over real records,
 and the instructions require arXiv ids for every claim about a paper.
 
+## 13. Forms: the model never sees the secrets, and never submits
+
+Arrival cards and sign-up forms are JavaScript apps with dynamic dropdowns, so plain HTTP is
+not enough: the forms skill drives a visible Chromium through Playwright (an optional
+dependency, so the core stays two packages). The user watches it fill, and its persistent
+browser profile in `~/.solfish/browser/` keeps logins between sessions.
+
+The model works with field numbers, not CSS selectors. `read_form` tags each visible field with
+`data-solfish="<n>"` and describes it by its label; `fill_form` targets those numbers, so the
+model never writes selectors that break on the next page redesign. Each field is filled and read
+back on its own, so one bad value (an option that doesn't exist, with the closest matches
+suggested) doesn't stop the rest.
+
+Personal details live in a `profile` table. Values marked sensitive are masked everywhere the
+model can see them, including what a filled field reads back. The model writes `{{passport_no}}`
+and the tool fills in the real value locally, just before typing it into the page, so a
+passport number never shows up in a request to the model provider or in a trace. That only
+works if the value never went through the chat in the first place, so sensitive values are set
+from the terminal (`solfish profile set <key> --sensitive`, read with `getpass`).
+
+The agent can click buttons, but not the last one. `click_button` exists for multi-step forms
+(Next, Continue, Add another traveller); each click asks for approval, and afterwards the field
+numbers are discarded, so the model has to `read_form` the new step instead of filling stale
+numbers. Buttons whose text or name says submit, confirm, pay, register, reset and the like
+(English, Malay and Chinese) are refused in code, and `read_form` marks them up front.
+Submitting a government form is a legal declaration, it can't be taken back, and it usually
+sits behind a captcha anyway; the review before it is where the human catches what the model
+couldn't know. The list errs towards refusing: a false "this is final" costs the user one
+click, a missed one could send a form they haven't checked. Approval is the second layer for
+buttons the list doesn't recognise.

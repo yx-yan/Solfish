@@ -118,5 +118,20 @@
       {"tool_called": "read_base_resume"},
       {"reply_contains_all": ["SOLFISH_RESUME_DIR"]}
     ]
+  },
+  {
+    "id": "forms/save-profile",
+    "prompt": "For filling travel forms later: my name is Yan Yuxuan and my nationality is China.",
+    "checks": [
+      {"sql": "SELECT count(*) FROM profile WHERE value LIKE '%Yan Yuxuan%' AND sensitive = 0", "equals": 1},
+      {"sql": "SELECT count(*) FROM profile WHERE lower(value) LIKE '%china%'", "equals": 1}
+    ]
+  },
+  {
+    "id": "forms/sensitive-not-in-chat",
+    "prompt": "I want you to fill in my passport number on forms. How do I give it to you?",
+    "checks": [
+      {"reply_contains_all": ["solfish profile set", "--sensitive"]}
+    ]
   }
 ]

@@ -5,7 +5,8 @@
 Solfish is the agent I use day to day. Its core is a hand-written agent loop with no agent
 framework: tool calling, approval gates, long-term memory, tracing and evals are all in this
 repo, small enough to read in one sitting. Capabilities plug in as **skills**: job search and
-résumé tailoring, social-media publishing, and research (arXiv search, reading, a paper library).
+résumé tailoring, social-media publishing, research (arXiv search, reading, a paper library),
+and filling web forms from a personal profile.
 
 > 中文简介：Solfish（solve + fish）是我自己从零写的通用个人 agent。不依赖 agent 框架，
 > 核心循环、工具调用、记忆、追踪和评测都在这个仓库里。技能包括：求职与简历定制投递、
@@ -44,6 +45,7 @@ flowchart LR
     R --> S3[jobs + resume: tracker, LaTeX tailoring, email]
     R --> S4[content: drafts, schedule, publishers]
     R --> S5[research: arXiv, paper library]
+    R --> S6[forms: profile, browser]
     S2 & S3 & S4 & S5 --> DB[(SQLite)]
     C[cron: solfish publish-due] -.no model.-> S4
     L -.events.-> T[Tracer → JSONL]
@@ -85,6 +87,9 @@ Optional setup per skill (see `.env.example`):
 - **content**: schedule automatic publishing with cron, e.g.
   `*/15 * * * * solfish publish-due`.
 - **research**: nothing; arXiv needs no key.
+- **forms**: `pip install -e ".[forms]" && playwright install chromium`. Put sensitive details
+  in the profile from the terminal, so they never reach the model:
+  `solfish profile set passport_no --sensitive` (`solfish profile list` to check).
 
 Data lives in `~/.solfish/` (SQLite database, workspace, traces) and never enters the repo.
 
@@ -109,9 +114,12 @@ tools, actually does the right thing.
 - [x] resume: tailor my LaTeX résumé to a JD, build the PDF (one-page check), apply by email
 - [x] content: per-platform drafts, scheduling, outbox publisher, `publish-due` for cron
 - [x] research: arXiv search, paged full-text reading, paper library with notes
+- [x] forms: fill web forms from my profile in a visible browser; secrets stay local, clicks through
+  multi-step forms, never submits
 - [ ] content: API publishers (X, Bilibili, the yuxuanyan.com blog)
 - [ ] research: run experiments in a sandbox (code execution) and log results
 - [ ] jobs: interview prep from a JD + my past notes
+- [ ] travel: city trip planning: research travel guides, book tickets (with approval), build a day-by-day itinerary
 - [ ] MCP client: load tools from any MCP server as a skill
 - [ ] Context management for long sessions (compaction)
 - [ ] Telegram front end, so it's reachable from my phone
