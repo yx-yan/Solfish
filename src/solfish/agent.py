@@ -159,7 +159,7 @@ class Agent:
         started = time.monotonic()
 
         t = self.tools.get(call.name)
-        if t is not None and t.needs_approval and not self.approve(call.name, args):
+        if t is not None and t.needs_approval and not self.approve(call.name, t.approval_args(args)):
             result = ToolResult("The user declined this action. Ask them how to proceed.", True)
         else:
             result = self.tools.execute(call.name, args)

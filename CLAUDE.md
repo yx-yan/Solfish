@@ -20,6 +20,8 @@ python evals/run_evals.py      # live API, costs money: ask before running
   DeepSeek ignores `is_error`, so error results also start with `Error:`
 - `src/solfish/tools/`: `@tool(ParamsModel)` + `ToolRegistry`; tool failures return `is_error` results, never raise
 - `src/solfish/skills/`: one module per capability exposing `load(ctx) -> Skill`; register in `skills/__init__.py`
+- `src/solfish/skills/publishers/`: one module per platform the content skill can do more than the
+  outbox for. Nothing here may press a platform's publish button
 - `src/solfish/session.py`: stored sessions, `SessionManager` (worker-thread turns, event fan-out,
   approvals any channel can answer); channels (CLI, web, Telegram) sit on top of it
 - `src/solfish/server.py` + `src/solfish/web/`: FastAPI + SSE + plain JS, no build step. Model output

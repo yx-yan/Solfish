@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 
 class ToolError(Exception):
@@ -26,6 +26,17 @@ class Tool:
     fn: Callable[[Any], str]
     # Side-effecting tools (writes, deletes, anything outward-facing) ask the human first.
     needs_approval: bool = False
+    # What to show the human when asking, built by code so the model can't misdescribe the action.
+    preview: Callable[[Any], str] | None = None
+
+    def approval_args(self, args: dict[str, Any]) -> dict[str, Any]:
+        """The arguments as shown for approval. Bad ones fail when the tool runs, as usual."""
+        if self.preview is None:
+            return args
+        try:
+            return args | {"preview": self.preview(self.params.model_validate(args))}
+        except (ValidationError, ToolError):
+            return args
 
     def definition(self) -> dict[str, Any]:
         schema = self.params.model_json_schema()
@@ -34,7 +45,11 @@ class Tool:
 
 
 def tool(
-    params: type[BaseModel], *, name: str | None = None, needs_approval: bool = False
+    params: type[BaseModel],
+    *,
+    name: str | None = None,
+    needs_approval: bool = False,
+    preview: Callable[[Any], str] | None = None,
 ) -> Callable[[Callable[[Any], str]], Tool]:
     """Turn a function into a Tool. The docstring becomes the description the model reads."""
 
@@ -42,6 +57,6 @@ def tool(
         doc = inspect.getdoc(fn)
         if not doc:
             raise ValueError(f"tool {fn.__name__!r} needs a docstring; the model reads it")
-        return Tool(name or fn.__name__, doc, params, fn, needs_approval)
+        return Tool(name or fn.__name__, doc, params, fn, needs_approval, preview)
 
     return wrap

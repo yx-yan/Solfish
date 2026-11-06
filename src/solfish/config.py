@@ -13,6 +13,7 @@ def load_dotenv(path: Path = Path(".env")) -> None:
     tests never pick up a real .env."""
     if not path.is_file():
         return
+    path.chmod(0o600)  # API keys live here
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -25,7 +26,7 @@ def load_dotenv(path: Path = Path(".env")) -> None:
             os.environ.setdefault(key, value)
 
 
-def _home() -> Path:
+def home_dir() -> Path:
     return Path(os.environ.get("SOLFISH_HOME", "~/.solfish")).expanduser()
 
 
@@ -46,6 +47,36 @@ class Smtp:
 
 
 @dataclass(frozen=True)
+class XAuth:
+    """OAuth 1.0a keys for the X publisher, from the app's Keys and Tokens page."""
+
+    api_key: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_X_API_KEY"))
+    api_secret: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_X_API_SECRET"))
+    access_token: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_X_ACCESS_TOKEN"))
+    access_secret: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_X_ACCESS_SECRET"))
+
+    @property
+    def configured(self) -> bool:
+        return all((self.api_key, self.api_secret, self.access_token, self.access_secret))
+
+
+@dataclass(frozen=True)
+class BlogDrafts:
+    """Where the blog publisher adds drafts. The token can do nothing else (see blog.py)."""
+
+    supabase_url: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_BLOG_SUPABASE_URL"))
+    publishable_key: str | None = field(
+        default_factory=lambda: os.environ.get("SOLFISH_BLOG_PUBLISHABLE_KEY")
+    )
+    token: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_BLOG_DRAFT_TOKEN"))
+    site: str = field(default_factory=lambda: os.environ.get("SOLFISH_BLOG_SITE", "https://yuxuanyan.com"))
+
+    @property
+    def configured(self) -> bool:
+        return all((self.supabase_url, self.publishable_key, self.token))
+
+
+@dataclass(frozen=True)
 class Settings:
     model: str = field(default_factory=lambda: os.environ.get("SOLFISH_MODEL", "deepseek-flash"))
     # DeepSeek's Anthropic-compatible endpoint, so the same SDK and message format work.
@@ -61,13 +92,20 @@ class Settings:
     # Server-side refusal fallback: if the main model declines, the API retries on another model.
     # Claude only; DeepSeek has no such beta.
     fallbacks: bool = False
-    home: Path = field(default_factory=_home)
+    home: Path = field(default_factory=home_dir)
     # The LaTeX résumé repo the resume skill tailors from (read-only; builds happen in a copy).
     resume_dir: Path | None = field(default_factory=lambda: _optional_path("SOLFISH_RESUME_DIR"))
     resume_main: str = field(
         default_factory=lambda: os.environ.get("SOLFISH_RESUME_MAIN", "resume-ntu-en.tex")
     )
     smtp: Smtp = field(default_factory=Smtp)
+    x: XAuth = field(default_factory=XAuth)
+    blog: BlogDrafts = field(default_factory=BlogDrafts)
+    linkedin_token: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_LINKEDIN_TOKEN"))
+    # LinkedIn retires API versions about a year after release, so this needs a bump now and then.
+    linkedin_version: str = field(
+        default_factory=lambda: os.environ.get("SOLFISH_LINKEDIN_VERSION", "202610")
+    )
     # Telegram front end (runs inside `solfish serve`). Only this chat id is answered; leave it
     # unset at first and the bot replies with yours.
     telegram_token: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_TELEGRAM_TOKEN"))
@@ -90,3 +128,4 @@ class Settings:
     def ensure_dirs(self) -> None:
         for d in (self.home, self.workspace, self.traces_dir):
             d.mkdir(parents=True, exist_ok=True)
+        self.home.chmod(0o700)  # sessions, traces and profile secrets are all under here

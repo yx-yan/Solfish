@@ -115,14 +115,49 @@ can run it cheaply and predictably. Letting the model wake up and decide to post
 wrong place for autonomy: what to post is a judgement call made with the user; when to post is
 a timestamp.
 
-Each platform has a `Publisher` (`post → location`). Most Chinese platforms have no posting
-API for individuals, and browser automation against them breaks often and risks the account,
-so the default publisher is an **outbox**: a folder with the text and media, ready to upload.
-A platform that does have an API is one function in `PUBLISHERS`. Failures are stored on the
-post, not lost.
+Each platform has a `Publisher` (`post → Delivery`). Most Chinese platforms have no posting
+API for individuals, and unattended browser automation against them breaks often and risks the
+account, so the default publisher is an **outbox**: a folder with the text and media, ready to
+upload. A platform that does have an API is one function in `PUBLISHERS`. Failures are stored on
+the post, not lost.
 
-Platform limits (小红书 title ≤ 20 characters, X ≤ 280) are checked in code when a draft is
-saved, so the model gets an error it can fix instead of a post that fails later.
+Three things keep an approved post honest once publishing is real:
+
+- **The approval shows the stored post.** The prompt is built by code from the database, not
+  from what the model says it is about to do. Editing a scheduled post sends it back to draft,
+  so what goes out is what was approved.
+- **A post is claimed before the platform is touched** (`publishing`, by a conditional UPDATE).
+  Overlapping cron runs can't both get it. A crash, or a timeout on the final request
+  (`MaybePublished`), leaves it there on purpose: only a person can tell whether it went out,
+  and retrying a public post is worse than asking.
+- **`published` means live.** A post that still needs the user to press something waits in
+  `handoff` until they confirm it.
+
+**Handoff, the one exception to staying out of the browser.** Uploading images and retyping text
+was the slow part of the outbox, so `solfish handoff <id>` fills the 小红书 or 知乎 page in a
+visible browser and stops. The risk that ruled out automation came from running unattended and
+at volume, so this runs only when the user starts it, one post at a time, and presses publish
+themselves; a scheduled time just sends a reminder. As with forms (section 13), the agent never
+presses the final button, and here no code path exists for it at all. It doesn't imitate human
+typing or work around verification: anything unexpected stops it, with no retry, and the outbox
+folder is still there. It runs as its own process with its own browser profile, because
+Playwright's sync API is tied to one thread and `serve` runs each turn on a new one.
+
+The blog is mine, so it could publish directly, but it doesn't: the site refuses to hold a
+service key, and an agent with an admin login could change anything. Instead a database function
+adds drafts through a token that can't do anything else, and I publish from `/admin`, where the
+preview shows the real rendering. The function has no status parameter, so that limit is
+structural, not a rule the client is trusted to follow.
+
+X and LinkedIn are the platforms that publish unattended. LinkedIn gives self-serve apps no
+refresh token, so its token is renewed by hand every 60 days; a post that hits an expired token
+fails with a message saying so. X uses OAuth 1.0a user tokens, which don't expire. X charges about 13x more for a post with a link, so the
+approval prompt says so. Moving the link to a reply was rejected: it would likely be billed the
+same and makes the post worse.
+
+Platform limits (小红书 title ≤ 20 characters, X ≤ 280 weighted, so about 140 Chinese characters)
+are checked in code when a draft is saved, so the model gets an error it can fix instead of a
+post that fails later.
 
 ## 12. Research: grounded and paged
 

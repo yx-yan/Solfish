@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime
+from itertools import cycle
+from pathlib import Path
+from unittest.mock import MagicMock, call
 
+import httpx2
 import pytest
 
-from solfish.config import Smtp
+from solfish import cli
+from solfish.config import BlogDrafts, Smtp, XAuth
 from solfish.skills import SKILLS, Context, content, forms, open_db, research, resume
-from solfish.tools import ToolRegistry
+from solfish.skills.publishers import blog, linkedin, x, xiaohongshu, zhihu
+from solfish.tools import ToolError, ToolRegistry
 
 
 @pytest.fixture
@@ -136,6 +143,15 @@ def test_post_limits(tools):
     assert tools.execute("draft_post", {"platform": "x", "body": "a" * 281}).is_error
 
 
+def test_x_counts_weighted_characters(tools):
+    assert x.x_length("abc") == 3
+    assert x.x_length("中文") == 4
+    assert x.x_length("see https://example.com/a/very/long/path/indeed") == 4 + 23
+    assert not tools.execute("draft_post", {"platform": "x", "body": "长" * 140}).is_error
+    r = tools.execute("draft_post", {"platform": "x", "body": "长" * 141})
+    assert r.is_error and "282" in r.content
+
+
 def test_draft_publish_to_outbox(tools, settings):
     (settings.workspace / "cover.png").write_bytes(b"png")
     r = tools.execute("draft_post", {
@@ -147,29 +163,452 @@ def test_draft_publish_to_outbox(tools, settings):
     out = settings.workspace / "outbox" / "xiaohongshu" / "1-盐鱼鲜的第一篇"
     assert (out / "post.md").read_text(encoding="utf-8").startswith("# 盐鱼鲜的第一篇")
     assert (out / "cover.png").exists()
+    assert "handoff" in tools.execute("list_posts", {}).content
     assert tools.execute("publish_post", {"id": 1}).is_error  # no double publishing
     assert tools.execute("edit_post", {"id": 1, "body": "改"}).is_error
+    assert not tools.execute("confirm_published", {"id": 1, "url": "https://xhs.test/1"}).is_error
+    listed = tools.execute("list_posts", {"status": "published"}).content
+    assert "https://xhs.test/1" in listed
+    assert tools.execute("publish_post", {"id": 1}).is_error
+
+
+def test_outbox_includes_tags_and_cover(tools, settings):
+    (settings.workspace / "cover.png").write_bytes(b"png")
+    tools.execute("draft_post", {
+        "platform": "wechat", "title": "t", "body": "b", "tags": ["#AI", " agent "], "cover": "cover.png",
+    })
+    tools.execute("publish_post", {"id": 1})
+    out = settings.workspace / "outbox" / "wechat" / "1-t"
+    assert (out / "post.md").read_text(encoding="utf-8").endswith("#AI #agent\n")
+    assert (out / "cover.png").exists()
+    assert tools.execute("draft_post", {"platform": "wechat", "body": "b", "cover": "no.png"}).is_error
 
 
 def test_scheduled_posts_publish_when_due(tools, settings):
-    tools.execute("draft_post", {"platform": "x", "body": "early"})
-    tools.execute("draft_post", {"platform": "x", "body": "later"})
+    tools.execute("draft_post", {"platform": "weibo", "body": "early"})
+    tools.execute("draft_post", {"platform": "weibo", "body": "later"})
     tools.execute("schedule_post", {"id": 1, "at": "2026-11-01T09:00"})
     tools.execute("schedule_post", {"id": 2, "at": "2026-11-02T09:00"})
     db = open_db(settings)
     lines = content.publish_due(settings, db, now=datetime(2026, 11, 1, 12, 0))
-    assert len(lines) == 1 and lines[0].startswith("#1 published")
+    assert len(lines) == 1 and lines[0].startswith("#1 ready")
     assert "scheduled" in tools.execute("list_posts", {"status": "scheduled"}).content
 
 
 def test_failed_publisher_is_recorded(tools, monkeypatch):
-    def broken(settings, post):
+    def broken(settings, db, post):
         raise RuntimeError("rate limited")
 
     monkeypatch.setitem(content.PUBLISHERS, "x", broken)
     tools.execute("draft_post", {"platform": "x", "body": "hi"})
     assert tools.execute("publish_post", {"id": 1}).is_error
     assert "rate limited" in tools.execute("list_posts", {"status": "failed"}).content
+
+
+def test_api_publisher_publishes_for_real(tools, monkeypatch):
+    monkeypatch.setitem(
+        content.PUBLISHERS, "x", lambda settings, db, post: content.Delivery("https://x.test/1")
+    )
+    tools.execute("draft_post", {"platform": "x", "body": "hi"})
+    assert tools.execute("publish_post", {"id": 1}).content == "#1 published: https://x.test/1"
+    assert "published" in tools.execute("list_posts", {"status": "published"}).content
+
+
+def test_a_post_is_only_published_once(tools, settings, monkeypatch):
+    """A second run that starts while the first is talking to the platform gets nothing."""
+    other_run, calls = [], []
+
+    def slow(settings_, db, post):
+        calls.append(post["id"])
+        other_run.append(tools.execute("publish_post", {"id": post["id"]}))
+        return content.Delivery("https://x.test/1")
+
+    monkeypatch.setitem(content.PUBLISHERS, "x", slow)
+    tools.execute("draft_post", {"platform": "x", "body": "hi"})
+    tools.execute("schedule_post", {"id": 1, "at": "2026-11-01T09:00"})
+    lines = content.publish_due(settings, open_db(settings), now=datetime(2026, 11, 1, 12, 0))
+    assert calls == [1] and other_run[0].is_error and "being published" in other_run[0].content
+    assert lines == ["#1 published: https://x.test/1"]
+
+
+def test_unclear_result_is_not_retried(tools, monkeypatch):
+    def timed_out(settings, db, post):
+        raise content.MaybePublished("no answer")
+
+    monkeypatch.setitem(content.PUBLISHERS, "x", timed_out)
+    tools.execute("draft_post", {"platform": "x", "body": "hi"})
+    r = tools.execute("publish_post", {"id": 1})
+    assert r.is_error and "may have gone out" in r.content
+    assert "publishing" in tools.execute("list_posts", {}).content
+    assert tools.execute("publish_post", {"id": 1}).is_error
+    assert tools.execute("schedule_post", {"id": 1, "at": "2026-11-01T09:00"}).is_error
+
+
+def test_crash_while_publishing_leaves_the_post_for_a_person(tools, settings, monkeypatch):
+    def killed(settings_, db, post):
+        raise KeyboardInterrupt  # not an Exception: nothing records a failure, as in a real crash
+
+    monkeypatch.setitem(content.PUBLISHERS, "x", killed)
+    tools.execute("draft_post", {"platform": "x", "body": "hi"})
+    tools.execute("schedule_post", {"id": 1, "at": "2026-11-01T09:00"})
+    db = open_db(settings)
+    with pytest.raises(KeyboardInterrupt):
+        content.publish_due(settings, db, now=datetime(2026, 11, 1, 12, 0))
+    assert content.publish_due(settings, db, now=datetime(2026, 11, 1, 12, 30)) == []  # no retry
+    assert content.stuck_posts(db) == []  # too recent: could still be a run in progress
+    db.execute("UPDATE posts SET updated_at = datetime('now', 'localtime', '-1 hour')")
+    db.commit()
+    assert "#1 stuck" in content.stuck_posts(db)[0]
+    assert tools.execute("edit_post", {"id": 1, "body": "new"}).is_error
+    assert not tools.execute("reset_post", {"id": 1}).is_error
+    assert "draft" in tools.execute("list_posts", {}).content
+
+
+def test_editing_a_scheduled_post_needs_approval_again(tools, settings):
+    tools.execute("draft_post", {"platform": "x", "body": "approved text"})
+    tools.execute("schedule_post", {"id": 1, "at": "2026-11-01T09:00"})
+    r = tools.execute("edit_post", {"id": 1, "body": "something else"})
+    assert "schedule" in r.content
+    assert content.publish_due(settings, open_db(settings), now=datetime(2026, 11, 2)) == []
+    assert "draft" in tools.execute("list_posts", {}).content
+
+
+def test_approval_shows_the_stored_post(tools):
+    tools.execute("draft_post", {"platform": "x", "body": "正文在这里", "tags": ["AI"]})
+    args = {"id": 1, "at": "2026-11-01T20:00"}
+    shown = tools.get("schedule_post").approval_args(args)
+    assert shown["id"] == 1
+    assert "正文在这里" in shown["preview"] and "#AI" in shown["preview"]
+    assert "2026-11-01 20:00" in shown["preview"]
+    assert "正文在这里" in tools.get("publish_post").approval_args({"id": 1})["preview"]
+    assert tools.get("publish_post").approval_args({"id": 9}) == {"id": 9}  # fails when it runs
+
+
+X_AUTH = XAuth("key", "secret", "token", "token-secret")
+
+
+def x_server(respond):
+    """A fake api.x.com: records requests, answers with respond(request)."""
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return respond(request)
+
+    return requests, httpx2.MockTransport(handler)
+
+
+def x_post(db, **fields):
+    fields = {"platform": "x", "body": "hello", **fields}
+    cur = db.execute(
+        f"INSERT INTO posts ({', '.join(fields)}) VALUES ({', '.join('?' * len(fields))})",
+        tuple(fields.values()),
+    )
+    return db.execute("SELECT * FROM posts WHERE id = ?", (cur.lastrowid,)).fetchone()
+
+
+@pytest.fixture
+def x_db(settings):
+    db = open_db(settings)
+    content.migrate(db)
+    return db
+
+
+def test_x_oauth_signature_matches_the_published_example():
+    """The worked example from X's "Creating a signature" guide."""
+    auth = XAuth(
+        "xvz1evFS4wEEPTGEFPHBog", "kAcSOqF21Fu85e7zjz7ZN2U4ZRhfV3WpwPAoE3Z7kBw",
+        "370773112-GmHxMAgYyLbNEtIKZeRNFsMKPR9EyMZeS9weJAEb",
+        "LswwdoUaIvS8ltyTt5jkRh4J50vUPVVHtR2YPi5kE",
+    )
+    header = x.oauth_header(
+        auth, "POST", "https://api.twitter.com/1.1/statuses/update.json",
+        {"include_entities": "true", "status": "Hello Ladies + Gentlemen, a signed OAuth request!"},
+        nonce="kYjzVBB8Y0ZFabxSWbWovY3uYSQ2pTgmZeNu2VS4cg", timestamp="1318622958",
+    )
+    assert 'oauth_signature="hCtSmYh%2BiHYCEqBWrE7C7hYmtUk%3D"' in header
+
+
+def test_x_posts_text_with_tags(settings, x_db):
+    requests, transport = x_server(lambda r: httpx2.Response(201, json={"data": {"id": "42"}}))
+    done = x.publish(replace(settings, x=X_AUTH), x_db, x_post(x_db, tags="AI\nagent"), transport)
+    assert done == content.Delivery("https://x.com/i/status/42")
+    (r,) = requests
+    assert str(r.url) == "https://api.x.com/2/tweets"
+    assert json.loads(r.content) == {"text": "hello\n\n#AI #agent"}
+    assert r.headers["authorization"].startswith("OAuth ")
+
+
+def test_x_uploads_images_first(settings, x_db):
+    settings.ensure_dirs()
+    (settings.workspace / "a.png").write_bytes(b"png")
+
+    def respond(request):
+        if request.url.path.endswith("/media/upload"):
+            return httpx2.Response(200, json={"data": {"id": "7"}})
+        return httpx2.Response(201, json={"data": {"id": "42"}})
+
+    requests, transport = x_server(respond)
+    x.publish(replace(settings, x=X_AUTH), x_db, x_post(x_db, media="a.png"), transport)
+    upload, create = requests
+    assert b"tweet_image" in upload.content and b"png" in upload.content
+    assert json.loads(create.content)["media"] == {"media_ids": ["7"]}
+
+
+def test_x_refuses_what_it_cannot_send(settings, x_db):
+    settings.ensure_dirs()
+    (settings.workspace / "clip.mp4").write_bytes(b"mp4")
+    requests, transport = x_server(lambda r: httpx2.Response(500))
+    ready = replace(settings, x=X_AUTH)
+    with pytest.raises(ToolError, match="SOLFISH_X_"):
+        x.publish(replace(settings, x=XAuth(None, None, None, None)), x_db, x_post(x_db), transport)
+    with pytest.raises(ToolError, match="only uploads images"):
+        x.publish(ready, x_db, x_post(x_db, media="clip.mp4"), transport)
+    with pytest.raises(ToolError, match="tags"):
+        x.publish(ready, x_db, x_post(x_db, body="a" * 278, tags="AI"), transport)
+    assert requests == []
+
+
+def test_x_error_and_timeout(settings, x_db):
+    ready = replace(settings, x=X_AUTH)
+    _, transport = x_server(lambda r: httpx2.Response(403, text="duplicate content"))
+    with pytest.raises(ToolError, match="403.*duplicate"):
+        x.publish(ready, x_db, x_post(x_db), transport)
+
+    def hang(request):
+        raise httpx2.ReadTimeout("slow", request=request)
+
+    _, transport = x_server(hang)
+    with pytest.raises(content.MaybePublished):
+        x.publish(ready, x_db, x_post(x_db), transport)
+
+
+def test_x_approval_warns_about_links(tools):
+    tools.execute("draft_post", {"platform": "x", "body": "read https://yuxuanyan.com"})
+    assert "link" in tools.get("publish_post").approval_args({"id": 1})["preview"]
+
+
+def xhs_page(url=xiaohongshu.PUBLISH_URL):
+    page = MagicMock(url=url)
+    tabs = page.locator.return_value.filter.return_value.locator.return_value
+    tabs.count.return_value = 2
+    tabs.nth.return_value.bounding_box.side_effect = cycle([{"x": -9999, "y": 0}, {"x": 10, "y": 10}])
+    return page
+
+
+def xhs_post(tools, settings):
+    (settings.workspace / "a.png").write_bytes(b"png")
+    (settings.workspace / "b.png").write_bytes(b"png")
+    tools.execute("draft_post", {
+        "platform": "xiaohongshu", "title": "标题", "body": "第一段\n第二段", "media": ["b.png"],
+        "cover": "a.png", "tags": ["AI"],
+    })
+
+
+def test_xiaohongshu_goes_to_handoff_with_a_command(tools, settings):
+    xhs_post(tools, settings)
+    r = tools.execute("publish_post", {"id": 1})
+    assert "solfish handoff 1" in r.content
+    assert "handoff" in tools.execute("list_posts", {}).content
+
+
+def test_xiaohongshu_needs_an_image(tools):
+    tools.execute("draft_post", {"platform": "xiaohongshu", "title": "t", "body": "b"})
+    r = tools.execute("publish_post", {"id": 1})
+    assert r.is_error and "at least one image" in r.content
+
+
+def test_xiaohongshu_fill_never_reaches_for_publish(tools, settings):
+    xhs_post(tools, settings)
+    page = xhs_page()
+    post = open_db(settings).execute("SELECT * FROM posts").fetchone()
+    xiaohongshu.fill(page, settings, post)
+
+    assert page.goto.call_count == 1
+    tabs = page.locator.return_value.filter.return_value.locator.return_value
+    assert tabs.nth.call_args_list[-2:] == [call(1), call(1)]  # the one on screen, then its click
+    uploads = page.locator.return_value.first.set_input_files.call_args_list
+    assert [c.args[0].rsplit("/", 1)[1] for c in uploads] == ["a.png", "b.png"]  # cover first
+    page.locator.return_value.fill.assert_called_once_with("标题")
+    assert [c.args[0] for c in page.keyboard.insert_text.call_args_list] == ["第一段", "第二段"]
+    assert call("#AI") in page.keyboard.type.call_args_list
+
+    used = {c.args[0] for c in page.locator.call_args_list}
+    assert used == {
+        xiaohongshu.TAB, xiaohongshu.FIRST_FILE_INPUT, xiaohongshu.NEXT_FILE_INPUT,
+        xiaohongshu.IMAGE_PREVIEW, xiaohongshu.TITLE, xiaohongshu.BODY,
+        xiaohongshu.TOPIC_SUGGESTION, xiaohongshu.TOPIC_NAME,
+    }
+    source = Path(xiaohongshu.__file__).read_text(encoding="utf-8")
+    assert "xhs-publish-btn" not in source and "publish-btn" not in source and "bg-red" not in source
+
+
+def test_xiaohongshu_waits_for_login(tools, settings):
+    xhs_post(tools, settings)
+    page = xhs_page("https://creator.xiaohongshu.com/login")
+    post = open_db(settings).execute("SELECT * FROM posts").fetchone()
+    xiaohongshu.fill(page, settings, post)
+    page.wait_for_url.assert_called_once()
+    assert page.goto.call_count == 2
+
+
+def test_handoff_records_what_the_user_says(tools, settings, monkeypatch):
+    xhs_post(tools, settings)
+    tools.execute("publish_post", {"id": 1})
+    page = xhs_page()
+    monkeypatch.setattr(forms, "open_browser", lambda settings_, profile: page)
+    answers = iter(["n", "y", "https://xhs.test/1"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+
+    assert cli.handoff(settings, 1) == 0
+    assert "handoff" in tools.execute("list_posts", {}).content  # not published yet
+    assert cli.handoff(settings, 1) == 0
+    assert "https://xhs.test/1" in tools.execute("list_posts", {"status": "published"}).content
+    assert cli.handoff(settings, 1) == 1  # nothing left to hand off
+
+
+def test_handoff_stops_at_the_first_surprise(tools, settings, monkeypatch, capsys):
+    xhs_post(tools, settings)
+    tools.execute("publish_post", {"id": 1})
+    page = MagicMock(url=xiaohongshu.PUBLISH_URL)
+    page.wait_for_selector.side_effect = RuntimeError("Timeout 30000ms exceeded\nlong log")
+    monkeypatch.setattr(forms, "open_browser", lambda settings_, profile: page)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+
+    assert cli.handoff(settings, 1) == 0
+    assert page.goto.call_count == 1 and page.wait_for_selector.call_count == 1
+    out = capsys.readouterr().out
+    assert "Timeout 30000ms exceeded" in out and "long log" not in out
+    page.wait_for_event.assert_called_once()  # the browser stays for the user
+    assert "handoff" in tools.execute("list_posts", {}).content
+
+
+BLOG = BlogDrafts("https://db.test", "pub-key", "draft-token", "https://site.test")
+
+
+def test_blog_adds_a_draft_for_the_user_to_publish(settings, x_db):
+    requests, transport = x_server(lambda r: httpx2.Response(200, json="uuid-1"))
+    post = x_post(x_db, platform="blog", title="手写 agent", body="正文", tags="ai\n中文标签")
+    done = blog.publish(replace(settings, blog=BLOG), x_db, post, transport)
+    assert not done.final
+    assert done.location == "https://site.test/admin/articles/uuid-1"
+    (r,) = requests
+    assert str(r.url) == "https://db.test/rest/v1/rpc/create_article_draft"
+    assert r.headers["apikey"] == "pub-key"
+    assert json.loads(r.content) == {
+        "p_token": "draft-token", "p_slug": f"solfish-{post['id']}", "p_locale": "zh",
+        "p_title": "手写 agent", "p_body_md": "正文", "p_tags": ["ai"],
+    }
+
+
+def test_blog_failures(settings, x_db):
+    ready = replace(settings, blog=BLOG)
+    post = x_post(x_db, platform="blog", title="Hello", body="text")
+    assert blog.locale(post) == "en"
+    with pytest.raises(ToolError, match="SOLFISH_BLOG_"):
+        blog.publish(replace(settings, blog=BlogDrafts(None, None, None)), x_db, post)
+    with pytest.raises(ToolError, match="needs a title"):
+        blog.publish(ready, x_db, x_post(x_db, platform="blog", title=""))
+    _, transport = x_server(lambda r: httpx2.Response(409, json={"code": "23505"}))
+    with pytest.raises(ToolError, match="already has a draft"):
+        blog.publish(ready, x_db, post, transport)
+
+    def hang(request):
+        raise httpx2.ReadTimeout("slow", request=request)
+
+    _, transport = x_server(hang)
+    with pytest.raises(content.MaybePublished):
+        blog.publish(ready, x_db, post, transport)
+
+
+def linkedin_api(request):
+    if request.url.path == "/v2/userinfo":
+        return httpx2.Response(200, json={"sub": "abc"})
+    if request.url.path == "/rest/images":
+        return httpx2.Response(200, json={"value": {
+            "uploadUrl": "https://upload.test/1", "image": "urn:li:image:1",
+        }})
+    if request.url.host == "upload.test":
+        return httpx2.Response(201)
+    return httpx2.Response(201, headers={"x-restli-id": "urn:li:share:9"})
+
+
+def test_linkedin_escapes_reserved_characters():
+    assert linkedin.escape("a (b) #tag # c_d") == "a \\(b\\) #tag \\# c\\_d"
+
+
+def test_linkedin_posts_text(settings, x_db):
+    requests, transport = x_server(linkedin_api)
+    ready = replace(settings, linkedin_token="tok")
+    done = linkedin.publish(ready, x_db, x_post(x_db, body="hi (there)", tags="AI"), transport)
+    assert done == content.Delivery("https://www.linkedin.com/feed/update/urn:li:share:9")
+    _, create = requests
+    assert create.headers["x-restli-protocol-version"] == "2.0.0"
+    assert create.headers["linkedin-version"] == ready.linkedin_version
+    body = json.loads(create.content)
+    assert body["author"] == "urn:li:person:abc"
+    assert body["commentary"] == "hi \\(there\\)\n\n#AI"
+    assert "content" not in body
+
+
+def test_linkedin_uploads_one_image(settings, x_db):
+    settings.ensure_dirs()
+    (settings.workspace / "a.png").write_bytes(b"png")
+    (settings.workspace / "b.png").write_bytes(b"png")
+    requests, transport = x_server(linkedin_api)
+    ready = replace(settings, linkedin_token="tok")
+    linkedin.publish(ready, x_db, x_post(x_db, media="a.png", title="alt"), transport)
+    _, init, upload, create = requests
+    assert json.loads(init.content)["initializeUploadRequest"]["owner"] == "urn:li:person:abc"
+    assert upload.method == "PUT" and upload.content == b"png"
+    assert upload.headers["authorization"] == "Bearer tok"
+    assert json.loads(create.content)["content"]["media"]["id"] == "urn:li:image:1"
+    with pytest.raises(ToolError, match="one image"):
+        linkedin.publish(ready, x_db, x_post(x_db, media="a.png\nb.png"), transport)
+
+
+def test_linkedin_says_when_the_token_has_expired(settings, x_db):
+    with pytest.raises(ToolError, match="SOLFISH_LINKEDIN_TOKEN"):
+        linkedin.publish(settings, x_db, x_post(x_db))
+    _, transport = x_server(lambda r: httpx2.Response(401))
+    with pytest.raises(ToolError, match="60 days"):
+        linkedin.publish(replace(settings, linkedin_token="old"), x_db, x_post(x_db), transport)
+
+
+def test_zhihu_goes_to_handoff_and_needs_a_title(tools):
+    tools.execute("draft_post", {"platform": "zhihu", "title": "标题", "body": "正文"})
+    tools.execute("draft_post", {"platform": "zhihu", "body": "正文"})
+    assert "solfish handoff 1" in tools.execute("publish_post", {"id": 1}).content
+    r = tools.execute("publish_post", {"id": 2})
+    assert r.is_error and "needs a title" in r.content
+
+
+def test_zhihu_fill_never_reaches_for_publish(tools, settings):
+    (settings.workspace / "c.png").write_bytes(b"png")
+    tools.execute("draft_post", {"platform": "zhihu", "title": "标题", "body": "正文", "cover": "c.png"})
+    page = MagicMock()
+    zhihu.fill(page, settings, open_db(settings).execute("SELECT * FROM posts").fetchone())
+    page.locator.return_value.fill.assert_called_once_with("标题")
+    assert page.evaluate.call_args.args[1] == "正文"
+    page.keyboard.press.assert_called_once_with("ControlOrMeta+V")
+    used = {c.args[0] for c in page.locator.call_args_list}
+    assert used == {zhihu.TITLE, zhihu.COVER_INPUT, zhihu.BODY}
+
+
+def test_old_posts_table_is_migrated(settings):
+    db = open_db(settings)
+    db.executescript("""
+        CREATE TABLE posts (id INTEGER PRIMARY KEY, platform TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL, media TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'draft', scheduled_at TEXT, published_at TEXT,
+            location TEXT, error TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')));
+        INSERT INTO posts (platform, body) VALUES ('x', 'old');
+    """)
+    content.migrate(db)
+    content.migrate(db)  # safe to run on every start
+    row = db.execute("SELECT * FROM posts").fetchone()
+    assert row["body"] == "old" and row["tags"] == "" and row["cover"] == ""
 
 
 # --- research -------------------------------------------------------------------------------
