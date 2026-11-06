@@ -92,7 +92,7 @@ function addApproval(a) {
   };
   const card = el("div", { className: "approval" },
     el("strong", { textContent: `Allow ${a.name}?` }),
-    el("pre", { textContent: JSON.stringify(a.input, null, 2) }),
+    el("pre", { textContent: a.input.preview ?? JSON.stringify(a.input, null, 2) }),
     el("div", { className: "actions" },
       el("button", { className: "primary", type: "button", textContent: "Allow", onclick: () => answer(true) }),
       el("button", { type: "button", textContent: "Deny", onclick: () => answer(false) })));

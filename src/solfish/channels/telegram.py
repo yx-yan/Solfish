@@ -25,6 +25,7 @@ from ..config import Settings
 from ..session import Busy, SessionManager
 
 LIMIT = 4000  # Telegram's cap is 4096 UTF-16 units; this leaves room for emoji
+MAX_PREVIEW = 3500  # of a post awaiting approval; leaves room for the rest of the message
 HELP = """\
 Send a message to talk to Solfish.
 /new start a new session
@@ -240,10 +241,12 @@ class TelegramBot:
 
     def _render(self, session_id: str, kind: str, data: dict[str, Any]) -> None:
         if kind == "approval_request":
+            shown = data["input"].get("preview") or _preview(data["input"], 1500)
+            shown = shown[:MAX_PREVIEW] + "…" if len(shown) > MAX_PREVIEW else shown
             where = "" if session_id == self.session else \
                 f"\n(session: {self.manager.store.get(session_id)['title'] or session_id})"
             message_id = self.send(
-                f"Allow {data['name']}?\n{_preview(data['input'], 1500)}{where}",
+                f"Allow {data['name']}?\n{shown}{where}",
                 reply_markup={"inline_keyboard": [[
                     {"text": "✅ Allow", "callback_data": f"a:{data['id']}:1"},
                     {"text": "❌ Deny", "callback_data": f"a:{data['id']}:0"},

@@ -36,5 +36,6 @@ def open_db(settings: Settings) -> sqlite3.Connection:
     settings.ensure_dirs()
     # Sessions run their turns on worker threads (one turn at a time per connection).
     db = sqlite3.connect(settings.db_path, check_same_thread=False)
+    settings.db_path.chmod(0o600)
     db.row_factory = sqlite3.Row
     return db

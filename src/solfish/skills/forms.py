@@ -99,7 +99,7 @@ SET_JS = """(el, v) => {
 }"""
 
 
-def open_browser(settings: Settings) -> Any:
+def open_browser(settings: Settings, profile: str = "browser") -> Any:
     """Start a visible Chromium with a persistent profile and return its page.
     Tests replace this function, so nothing else touches a real browser."""
     try:
@@ -110,7 +110,7 @@ def open_browser(settings: Settings) -> Any:
         ) from None
     pw = sync_playwright().start()
     try:
-        browser = pw.chromium.launch_persistent_context(str(settings.home / "browser"), headless=False)
+        browser = pw.chromium.launch_persistent_context(str(settings.home / profile), headless=False)
     except Exception as e:
         pw.stop()
         if "already in use" in str(e) or "existing browser session" in str(e):

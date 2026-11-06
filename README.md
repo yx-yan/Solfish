@@ -85,14 +85,19 @@ solfish serve --open                       # local web UI at 127.0.0.1:8765 (pip
                                            # + the Telegram bot, if SOLFISH_TELEGRAM_TOKEN is set
 solfish --resume 20261101-152012-ab12cd    # pick one up where it stopped
 solfish publish-due                        # publish scheduled posts that are due (run from cron)
+solfish handoff 12                         # fill post 12 into 小红书 or 知乎; you press publish
+solfish mark-published 12 https://...      # record a post you published yourself
 ```
 
 Optional setup per skill (see `.env.example`):
 
 - **resume**: `SOLFISH_RESUME_DIR` points at a LaTeX résumé repo; needs XeLaTeX. Email
   applications need the `SOLFISH_SMTP_*` settings.
-- **content**: schedule automatic publishing with cron, e.g.
-  `*/15 * * * * solfish publish-due`.
+- **content**: X needs the `SOLFISH_X_*` keys, and each post costs money. LinkedIn needs
+  `SOLFISH_LINKEDIN_TOKEN`, renewed every 60 days. The blog needs the `SOLFISH_BLOG_*` settings.
+  `solfish handoff` needs the same install as **forms**. Schedule publishing with cron, using the venv's full path; put
+  the keys in `~/.solfish/.env`, which cron can find, e.g.
+  `*/15 * * * * /path/to/Solfish/.venv/bin/solfish publish-due`.
 - **research**: nothing; arXiv needs no key.
 - **forms**: `pip install -e ".[forms]" && playwright install chromium`. Put sensitive details
   in the profile from the terminal, so they never reach the model:
@@ -123,7 +128,9 @@ tools, actually does the right thing.
 - [x] research: arXiv search, paged full-text reading, paper library with notes
 - [x] forms: fill web forms from my profile in a visible browser; secrets stay local, clicks through
   multi-step forms, never submits
-- [ ] content: API publishers (X, Bilibili, the yuxuanyan.com blog)
+- [x] content: X and LinkedIn publishers; blog drafts; 小红书 and 知乎 handoff (fills the page, I
+  press publish)
+- [ ] content: 公众号 drafts through the official API
 - [ ] research: run experiments in a sandbox (code execution) and log results
 - [ ] jobs: interview prep from a JD + my past notes
 - [ ] travel: city trip planning: research travel guides, book tickets (with approval), build a day-by-day itinerary
