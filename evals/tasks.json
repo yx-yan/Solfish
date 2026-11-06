@@ -96,6 +96,23 @@
     ]
   },
   {
+    "id": "content/one-piece-three-platforms",
+    "prompt": "我写了一段话：手写 agent loop 最大的收获，是发现框架藏起来的其实只是一个 while 循环。帮我改写成 X、公众号和小红书三个平台的版本，都先存成草稿，不要发布。",
+    "checks": [
+      {"sql": "SELECT count(DISTINCT platform) FROM posts WHERE platform IN ('x', 'wechat', 'xiaohongshu') AND status = 'draft'", "equals": 3},
+      {"sql": "SELECT count(DISTINCT body) FROM posts", "equals": 3}
+    ]
+  },
+  {
+    "id": "content/confirm-handoff",
+    "setup": ["INSERT INTO posts (platform, title, body, status, location) VALUES ('xiaohongshu', '标题', '正文', 'handoff', 'outbox/xiaohongshu/1-标题')"],
+    "prompt": "#1 我已经在小红书发出去了，链接是 https://www.xiaohongshu.com/explore/abc",
+    "checks": [
+      {"sql": "SELECT status FROM posts WHERE id = 1", "equals": "published"},
+      {"sql": "SELECT location FROM posts WHERE id = 1", "equals": "https://www.xiaohongshu.com/explore/abc"}
+    ]
+  },
+  {
     "id": "research/save-paper",
     "prompt": "Find the Self-RAG paper (Asai et al.) on arXiv and add it to my reading list.",
     "checks": [

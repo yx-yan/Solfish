@@ -115,14 +115,49 @@ can run it cheaply and predictably. Letting the model wake up and decide to post
 wrong place for autonomy: what to post is a judgement call made with the user; when to post is
 a timestamp.
 
-Each platform has a `Publisher` (`post → location`). Most Chinese platforms have no posting
-API for individuals, and browser automation against them breaks often and risks the account,
-so the default publisher is an **outbox**: a folder with the text and media, ready to upload.
-A platform that does have an API is one function in `PUBLISHERS`. Failures are stored on the
-post, not lost.
+Each platform has a `Publisher` (`post → Delivery`). Most Chinese platforms have no posting
+API for individuals, and unattended browser automation against them breaks often and risks the
+account, so the default publisher is an **outbox**: a folder with the text and media, ready to
+upload. A platform that does have an API is one function in `PUBLISHERS`. Failures are stored on
+the post, not lost.
 
-Platform limits (小红书 title ≤ 20 characters, X ≤ 280) are checked in code when a draft is
-saved, so the model gets an error it can fix instead of a post that fails later.
+Three things keep an approved post honest once publishing is real:
+
+- **The approval shows the stored post.** The prompt is built by code from the database, not
+  from what the model says it is about to do. Editing a scheduled post sends it back to draft,
+  so what goes out is what was approved.
+- **A post is claimed before the platform is touched** (`publishing`, by a conditional UPDATE).
+  Overlapping cron runs can't both get it. A crash, or a timeout on the final request
+  (`MaybePublished`), leaves it there on purpose: only a person can tell whether it went out,
+  and retrying a public post is worse than asking.
+- **`published` means live.** A post that still needs the user to press something waits in
+  `handoff` until they confirm it.
+
+**Handoff, the one exception to staying out of the browser.** Uploading images and retyping text
+was the slow part of the outbox, so `solfish handoff <id>` fills the 小红书 or 知乎 page in a
+visible browser and stops. The risk that ruled out automation came from running unattended and
+at volume, so this runs only when the user starts it, one post at a time, and presses publish
+themselves; a scheduled time just sends a reminder. As with forms (section 13), the agent never
+presses the final button, and here no code path exists for it at all. It doesn't imitate human
+typing or work around verification: anything unexpected stops it, with no retry, and the outbox
+folder is still there. It runs as its own process with its own browser profile, because
+Playwright's sync API is tied to one thread and `serve` runs each turn on a new one.
+
+The blog is mine, so it could publish directly, but it doesn't: the site refuses to hold a
+service key, and an agent with an admin login could change anything. Instead a database function
+adds drafts through a token that can't do anything else, and I publish from `/admin`, where the
+preview shows the real rendering. The function has no status parameter, so that limit is
+structural, not a rule the client is trusted to follow.
+
+X and LinkedIn are the platforms that publish unattended. LinkedIn gives self-serve apps no
+refresh token, so its token is renewed by hand every 60 days; a post that hits an expired token
+fails with a message saying so. X uses OAuth 1.0a user tokens, which don't expire. X charges about 13x more for a post with a link, so the
+approval prompt says so. Moving the link to a reply was rejected: it would likely be billed the
+same and makes the post worse.
+
+Platform limits (小红书 title ≤ 20 characters, X ≤ 280 weighted, so about 140 Chinese characters)
+are checked in code when a draft is saved, so the model gets an error it can fix instead of a
+post that fails later.
 
 ## 12. Research: grounded and paged
 
@@ -136,7 +171,7 @@ and the instructions require arXiv ids for every claim about a paper.
 
 Arrival cards and sign-up forms are JavaScript apps with dynamic dropdowns, so plain HTTP is
 not enough: the forms skill drives a visible Chromium through Playwright (an optional
-dependency, so the core stays two packages). The user watches it fill, and its persistent
+dependency, so the core stays small). The user watches it fill, and its persistent
 browser profile in `~/.solfish/browser/` keeps logins between sessions.
 
 The model works with field numbers, not CSS selectors. `read_form` tags each visible field with
@@ -217,3 +252,31 @@ stop that:
 
 Replies arrive whole when the turn ends: requests aren't streamed yet (section 9). Thinking and
 tool calls already appear as they happen, which is where the waiting is.
+
+## 16. Telegram: the phone as a channel
+
+Telegram is the channel for when I'm away from the laptop, so it has to work without a public
+address. That means long polling (`getUpdates`), not a webhook. The bot runs inside
+`solfish serve` as one more `SessionManager` subscriber. That's what lets it approve a request
+from a session started in the browser: approval requests from **every** session go to the phone,
+labelled with the session they come from. Everything else follows the session the chat is
+currently on.
+
+- **No bot framework.** Solfish uses a handful of Bot API methods. Calling them with httpx2 is
+  about as much code as configuring a framework, and it stays readable. Errors never include the
+  exception text, because the request URL contains the bot token.
+- **One chat id.** This bot can write files and send email, so it answers exactly one chat and
+  ignores everyone else silently, buttons included. With no id configured it only tells the
+  sender their id, so setup needs no other tool.
+- **One message per turn.** A turn is a single "Working…" message, edited as each tool runs and
+  closed with the step count, followed by the answer. Edits are rate-limited much less than new
+  messages, and the chat doesn't fill up with tool noise. Rendering runs on its own thread, so a
+  slow Telegram call never holds up the agent.
+- **Plain text.** Replies are sent without `parse_mode`. Telegram's MarkdownV2 rejects a whole
+  message over one unescaped character, and an answer that fails to send is worse than one that
+  shows raw `**`. Long answers are split at line breaks under the 4096-character limit.
+- **Messages go through Telegram's servers.** Sensitive form values still never enter the chat
+  (section 13), so nothing changes there. The forms skill opens its browser on the Mac, so from
+  the phone it's only good for "fill it now, check it when I'm home".
+- `publish-due` (from cron) also reports what it published to the chat, so scheduled posts no
+  longer go out silently.

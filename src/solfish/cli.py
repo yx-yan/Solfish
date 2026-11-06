@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import getpass
 import sys
 from typing import Any
@@ -11,13 +12,15 @@ import anthropic
 
 from .agent import format_args
 from .app import DEFAULT_SKILLS, build_agent, new_session_id
-from .config import Settings, load_dotenv
+from .channels import telegram
+from .config import Settings, home_dir, load_dotenv
 from .session import SessionStore
 from .skills import content, forms, open_db
 from .tools import ToolError
 from .trace import Tracer
 
 DIM, CYAN, RED, RESET = "\033[2m", "\033[36m", "\033[31m", "\033[0m"
+PUBLISH_PROFILE = "browser-publish"  # kept apart from the forms skill, which may be running
 
 
 def _preview(text: str, limit: int = 160) -> str:
@@ -40,10 +43,49 @@ def show(kind: str, data: dict[str, Any]) -> None:
 
 def ask_approval(name: str, args: dict[str, Any]) -> bool:
     try:
-        answer = input(f"Allow {name} {format_args(args)}? [y/N] ")
+        shown = f"\n{args['preview']}\n" if "preview" in args else f"{format_args(args)}"
+        answer = input(f"Allow {name} {shown}? [y/N] ")
     except EOFError:
         return False
     return answer.strip().lower() in ("y", "yes")
+
+
+def handoff(settings: Settings, post_id: int) -> int:
+    """Fill a post into its platform's page, leave publishing to the user, record the outcome."""
+    db = open_db(settings)
+    content.migrate(db)
+    post = db.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
+    if post is None or post["status"] != "handoff":
+        print(f"{RED}Post #{post_id} isn't waiting for you to publish it.{RESET}")
+        return 1
+    module = content.BROWSER.get(post["platform"])
+    if module is None:
+        print(f"{RED}No browser handoff for {post['platform']}; upload from {post['location']}.{RESET}")
+        return 1
+    try:
+        page = forms.open_browser(settings, PUBLISH_PROFILE)
+    except ToolError as e:
+        print(f"{RED}{e}{RESET}")
+        return 1
+    print("If the page asks you to log in, scan the code; the post is filled in after that.")
+    try:
+        module.fill(page, settings, post)
+        print("Filled in. Check it, press publish yourself, then close the browser window.")
+    except Exception as e:  # any surprise on the page: stop there, and never try again by itself
+        print(f"{RED}Stopped: {str(e).splitlines()[0]}{RESET}")
+        print(f"Finish in the browser from {post['location']}, or close it to leave this for later.")
+    with contextlib.suppress(Exception):  # closing the last window can drop the connection first
+        page.wait_for_event("close", timeout=0)
+    try:
+        if input("Did you publish it? [y/N] ").strip().lower() not in ("y", "yes"):
+            print(f"Left waiting; run `solfish handoff {post_id}` again when you're ready.")
+            return 0
+        url = input("Link to the post (Enter to skip): ").strip()
+    except EOFError:
+        return 0
+    content.mark_published(db, post_id, url or None)
+    print(f"Post #{post_id} is marked as published.")
+    return 0
 
 
 def summary(tracer: Tracer) -> str:
@@ -77,6 +119,11 @@ def main(argv: list[str] | None = None) -> int:
     srv.add_argument("--port", type=int, default=8765)
     srv.add_argument("--open", action="store_true", help="open it in the browser")
     sub.add_parser("publish-due", help="publish scheduled posts that are due (for cron; no model)")
+    fill = sub.add_parser("handoff", help="fill a post into its platform's page; you press publish")
+    fill.add_argument("id", type=int)
+    done = sub.add_parser("mark-published", help="record that you published a post yourself (no model)")
+    done.add_argument("id", type=int)
+    done.add_argument("url", nargs="?", help="link to the live post")
     prof = sub.add_parser("profile", help="view or set form-filling details (no model)")
     prof.add_argument("action", choices=["list", "set"])
     prof.add_argument("key", nargs="?")
@@ -84,11 +131,34 @@ def main(argv: list[str] | None = None) -> int:
                       help="hide the value from the model; it is read here, not typed into chat")
     args = p.parse_args(argv)
     load_dotenv()
+    load_dotenv(home_dir() / ".env")  # cron doesn't start in the directory you run solfish from
 
     if args.cmd == "publish-due":
         settings = Settings()
-        for line in content.publish_due(settings, open_db(settings)) or ["Nothing due."]:
-            print(line)
+        db = open_db(settings)
+        lines = content.publish_due(settings, db)
+        print("\n".join(lines) or "Nothing due.")
+        for line in content.stuck_posts(db):  # printed, not sent: cron would repeat it every run
+            print(f"{RED}{line}{RESET}")
+        if lines:
+            try:
+                telegram.notify(settings, "Scheduled posts:\n" + "\n".join(lines))
+            except telegram.TelegramError as e:
+                print(f"{RED}Telegram: {e}{RESET}")
+        return 0
+
+    if args.cmd == "handoff":
+        return handoff(Settings(), args.id)
+
+    if args.cmd == "mark-published":
+        db = open_db(Settings())
+        content.migrate(db)
+        try:
+            content.mark_published(db, args.id, args.url)
+        except ToolError as e:
+            print(f"{RED}{e}{RESET}")
+            return 1
+        print(f"Post #{args.id} is marked as published.")
         return 0
 
     if args.cmd == "profile":
