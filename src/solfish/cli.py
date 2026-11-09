@@ -6,16 +6,17 @@ import argparse
 import contextlib
 import getpass
 import sys
+from datetime import datetime
 from typing import Any
 
 import anthropic
 
 from .agent import format_args
-from .app import DEFAULT_SKILLS, build_agent, new_session_id
+from .app import DEFAULT_SKILLS, build_agent, new_client, new_session_id
 from .channels import telegram
 from .config import Settings, home_dir, load_dotenv
 from .session import SessionStore
-from .skills import content, forms, open_db
+from .skills import content, forms, open_db, spark
 from .tools import ToolError
 from .trace import Tracer
 
@@ -129,6 +130,9 @@ def main(argv: list[str] | None = None) -> int:
     prof.add_argument("key", nargs="?")
     prof.add_argument("--sensitive", action="store_true",
                       help="hide the value from the model; it is read here, not typed into chat")
+    sub.add_parser("interests", help="what Solfish knows you like talking about (no model)")
+    sp = sub.add_parser("spark", help="let Solfish start a conversation, then chat")
+    sp.add_argument("--dry-run", action="store_true", help="print the opener without saving anything")
     args = p.parse_args(argv)
     load_dotenv()
     load_dotenv(home_dir() / ".env")  # cron doesn't start in the directory you run solfish from
@@ -176,8 +180,23 @@ def main(argv: list[str] | None = None) -> int:
         print(forms.describe_profile(db))
         return 0
 
+    if args.cmd == "interests":
+        print(spark.describe(open_db(Settings())))
+        return 0
+
     settings = Settings()
     skills = tuple(s.strip() for s in args.skills.split(",") if s.strip())
+
+    if args.cmd == "spark" and args.dry_run:
+        db = open_db(settings)
+        db.executescript(spark.SCHEMA)
+        interest = spark.pick(db, datetime.now())
+        if interest is None:
+            print("No interests yet. Tell Solfish what you like talking about.")
+            return 0
+        print(f"{DIM}{spark.seed_message(interest)}{RESET}\n")
+        print(f"🐟 {spark.write_opener(new_client(settings), settings, db, interest)}")
+        return 0
 
     if args.cmd == "serve":
         try:
@@ -194,7 +213,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{r['id']}  {DIM}{r['updated_at']} {r['channel']:<8}{RESET} {r['title']}")
         return 0
 
-    if args.resume:
+    if args.cmd == "spark":
+        started = spark.start(store, new_client(settings), settings, "cli")
+        if started is None:
+            print("No interests yet. Tell Solfish what you like talking about.")
+            return 0
+        session_id, opener = started
+        history = store.load(session_id)
+        print(f"\n🐟 {opener}\n")
+    elif args.resume:
         if store.get(args.resume) is None:
             p.error(f"no session {args.resume}; see `solfish sessions`")
         session_id, history = args.resume, store.load(args.resume)

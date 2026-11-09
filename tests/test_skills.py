@@ -826,3 +826,13 @@ def test_click_button_moves_on_but_never_submits(tools, browser):
 ])
 def test_final_button_detection(text, final):
     assert forms.is_final({"label": text, "name": ""}) is final
+
+
+def test_interests_roundtrip(tools):
+    assert "Saved interest #1" in tools.execute("add_interest", {"topic": "MLX quantization"}).content
+    again = tools.execute("add_interest", {"topic": "mlx  Quantization", "evidence": "asked twice"})
+    assert "already existed" in again.content
+    assert "weight 1.5" in tools.execute("list_interests", {}).content
+    assert tools.execute("mute_interest", {"id": 1}).content == "Muted interest #1."
+    assert tools.execute("list_interests", {}).content == "No interests yet."
+    assert tools.execute("mute_interest", {"id": 9}).is_error

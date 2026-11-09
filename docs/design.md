@@ -280,3 +280,26 @@ currently on.
   the phone it's only good for "fill it now, check it when I'm home".
 - `publish-due` (from cron) also reports what it published to the chat, so scheduled posts no
   longer go out silently.
+
+## 17. Spark: conversations Solfish starts
+
+Talking to an assistant usually means bringing it a question, and after a while I run out of
+questions. The spark skill turns that around: Solfish keeps a list of what I like talking about
+and opens a conversation itself, one specific point and one easy question.
+
+- **A seeded session, not a special mode.** A spark is an ordinary session whose history starts
+  with `user: "[spark] <topic>"` and `assistant: <opener>`. The history still starts with a user
+  turn and only grows, so my reply is just the next turn: same loop, same caching, resumable from
+  any channel. The assistant turn is stored as text blocks, the shape the loop stores every
+  assistant turn in.
+- **The opener is one call without tools.** Writing three sentences doesn't need the loop, and
+  without tools the model can't wander off. It sees the interest and the memory snapshot, and is
+  told not to invent facts or links.
+- **Picking is plain arithmetic.** Weight times freshness, where an interest sparked within the
+  last 72 hours is partly rested. Saying the same topic again adds weight; muting takes it out.
+  No model call, so it's testable with a fixed clock.
+- **Started by hand for now.** `/spark` in Telegram, `solfish spark` in the terminal. Mining
+  interests from my chats, projects and feeds, a scheduler inside `serve` that respects quiet
+  hours and backs off when I don't answer, and learning from replies come next, each on top of
+  this seam.
+

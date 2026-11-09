@@ -1,0 +1,17 @@
+# `solfish serve` as a system service: the Telegram bot, plus the web UI on 127.0.0.1 only.
+# Installed by deploy.sh; USER is replaced with the login on the server.
+[Unit]
+Description=Solfish personal agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=USER
+WorkingDirectory=/home/USER/solfish
+ExecStart=/home/USER/solfish/.venv/bin/solfish serve
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -22,7 +22,7 @@ from typing import Any
 import anthropic
 
 from .agent import Agent
-from .app import DEFAULT_SKILLS, build_agent, new_session_id
+from .app import DEFAULT_SKILLS, build_agent, new_client, new_session_id
 from .config import Settings
 from .skills import open_db
 from .trace import Tracer
@@ -205,6 +205,12 @@ class SessionManager:
         session_id = new_session_id()
         self.store.create(session_id, channel)
         return session_id
+
+    def model_client(self) -> anthropic.Anthropic:
+        """The client for one-off model calls outside a session's loop."""
+        if self.client is None:
+            self.client = new_client(self.settings)
+        return self.client
 
     def _agent(self, session_id: str) -> tuple[Agent, Tracer]:
         if session_id not in self._agents:

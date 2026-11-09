@@ -23,6 +23,7 @@ import httpx2
 
 from ..config import Settings
 from ..session import Busy, SessionManager
+from ..skills import spark
 
 LIMIT = 4000  # Telegram's cap is 4096 UTF-16 units; this leaves room for emoji
 MAX_PREVIEW = 3500  # of a post awaiting approval; leaves room for the rest of the message
@@ -32,7 +33,9 @@ Send a message to talk to Solfish.
 /sessions switch to a recent one
 /stop stop the current turn
 /cost tokens and cost of this session
-/files send a recent workspace file"""
+/files send a recent workspace file
+/spark let Solfish pick something to talk about
+/interests what it knows you like talking about"""
 
 
 class TelegramError(Exception):
@@ -206,8 +209,27 @@ class TelegramBot:
                 return
             buttons = [[{"text": p[-50:], "callback_data": f"f:{i}"}] for i, p in enumerate(self._files)]
             self.send("Which file?", reply_markup={"inline_keyboard": buttons})
+        elif cmd == "/spark":
+            self._later(self.spark)  # one model call; off the polling thread
+        elif cmd == "/interests":
+            self.send(spark.describe(self.manager.store.db))
         else:
             self.send(HELP)
+
+    def spark(self) -> None:
+        """Start a conversation Solfish picked, and make it the current session."""
+        self.api("sendChatAction", chat_id=self.chat_id, action="typing")
+        try:
+            started = spark.start(self.manager.store, self.manager.model_client(),
+                                  self.manager.settings, "telegram")
+        except Exception as e:
+            self.send(f"⚠️ Couldn't start a conversation: {e}")
+            return
+        if started is None:
+            self.send("I don't know what you like talking about yet. Tell me, and I'll remember.")
+            return
+        self.session, opener = started
+        self.send(opener)
 
     def _message(self, text: str) -> None:
         if self.session is None:

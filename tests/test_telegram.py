@@ -158,6 +158,26 @@ def test_commands(settings):
     assert "/new" in tg.sent()[-1]["text"]
 
 
+def test_spark_opens_a_session_you_reply_in(settings):
+    manager, bot, tg = make(settings, message(text("Still on MLX?")), message(text("Nice.")))
+    bot.handle(say("/spark"))
+    assert "know what you like" in tg.sent()[-1]["text"]
+
+    bot.handle(say("/interests"))
+    assert tg.sent()[-1]["text"] == "No interests yet."
+    manager.store.db.execute("INSERT INTO interests (topic) VALUES ('MLX')")
+    bot.handle(say("/spark"))
+    assert tg.sent()[-1]["text"] == "Still on MLX?"
+    sid = bot.session
+    assert manager.store.get(sid)["channel"] == "telegram"
+
+    bot.handle(say("yes, 4-bit works"))
+    wait_idle(manager, sid)
+    sent = manager.client.requests[-1]["messages"]
+    assert [m["role"] for m in sent] == ["user", "assistant", "user"]
+    assert sent[1]["content"] == [{"type": "text", "text": "Still on MLX?"}]
+
+
 def test_poll_reads_updates_and_advances_the_offset(settings):
     manager, bot, tg = make(settings)
     tg.updates = [say("/help")]

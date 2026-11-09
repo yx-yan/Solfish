@@ -60,6 +60,7 @@ flowchart LR
 | Sessions | [`session.py`](src/solfish/session.py) | Conversations stored append-only and resumable; one manager runs turns for every channel and routes approvals from any of them |
 | Web UI | [`server.py`](src/solfish/server.py), [`web/`](src/solfish/web/) | FastAPI + SSE + plain JS: live thinking and tool calls, approval buttons, workspace downloads; model output treated as hostile (no raw HTML, strict CSP) |
 | Telegram | [`channels/telegram.py`](src/solfish/channels/telegram.py) | Long-polling bot on the raw Bot API: one live "working" message per turn, Allow/Deny buttons for approvals from any session, answers one chat id only |
+| Spark | [`skills/spark.py`](src/solfish/skills/spark.py) | Solfish starts the conversation: picks one of my interests and opens a seeded session with a short, specific question |
 | Memory | [`skills/memory.py`](src/solfish/skills/memory.py) | Persistent notes; recent ones in the system prompt, older ones searchable |
 | Safety | `needs_approval` flag | Writes and deletes wait for a human `y` |
 | Observability | [`trace.py`](src/solfish/trace.py) | JSONL trace per session: every model call, tool call, token count, cache hit and dollar cost |
@@ -81,6 +82,8 @@ solfish                                    # chat
 solfish ask "what applications are still active?"
 solfish --skills core,memory               # load only some skills
 solfish sessions                           # recent conversations
+solfish spark                              # let Solfish pick a topic and start (/spark in Telegram)
+solfish interests                          # what it knows you like talking about
 solfish serve --open                       # local web UI at 127.0.0.1:8765 (pip install -e ".[server]")
                                            # + the Telegram bot, if SOLFISH_TELEGRAM_TOKEN is set
 solfish --resume 20261101-152012-ab12cd    # pick one up where it stopped
@@ -118,6 +121,24 @@ approvals, step limits, refusals, interrupted turns, and that history stays appe
 The eval suite measures what the tests can't: whether the model, given these prompts and
 tools, actually does the right thing.
 
+## Running it on a server
+
+Telegram uses long polling, so a small VPS with no open ports beyond SSH is enough (1 GB RAM;
+Ubuntu 24.04 with `git sqlite3 python3.12-venv rsync`). [`deploy/`](deploy/) has the pieces:
+
+```bash
+SOLFISH_DEPLOY_HOST=user@host deploy/deploy.sh          # push code, install, (re)start the service
+SOLFISH_DEPLOY_HOST=user@host deploy/deploy.sh logs     # follow the log
+SOLFISH_DEPLOY_HOST=user@host deploy/deploy.sh backup   # copy the newest daily snapshot to the Mac
+```
+
+The first time, copy `~/.solfish/` (without `browser/`) and `.env` into `~/.solfish/` on the
+server, `chmod 600` them, and stop any bot on the laptop: two bots on one token steal each
+other's updates. The server then holds the only copy of the data; a timer snapshots the database
+at 04:00 and keeps 14 days. The web UI stays on the server's 127.0.0.1; reach it with
+`ssh -L 8765:127.0.0.1:8765 user@host`. Skills that open a browser (forms, 小红书/知乎 handoff)
+still need the Mac.
+
 ## Roadmap
 
 - [x] Agent loop, tool registry, approval gate, tracing
@@ -142,6 +163,9 @@ tools, actually does the right thing.
 - [x] Telegram front end, so it's reachable from my phone
 - [ ] macOS menu bar app with a quick-ask hotkey
 - [ ] Scheduled runs (morning brief: deadlines, follow-ups)
+- [x] spark: Solfish starts conversations from my interests (`/spark`, `solfish spark`)
+- [ ] spark: mine interests from chats, projects and feeds; scheduled sparks with quiet hours and
+  back-off; learn from replies
 
 ## License
 
