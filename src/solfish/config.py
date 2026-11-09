@@ -99,11 +99,15 @@ class Settings:
     # Claude only; DeepSeek has no such beta.
     fallbacks: bool = False
     home: Path = field(default_factory=home_dir)
-    # The LaTeX résumé repo the resume skill tailors from (read-only; builds happen in a copy).
+    # The LaTeX résumé repo the resume skill tailors from. Never written in place: builds happen
+    # in a copy, and changes to the master go up as a pull request from a temporary worktree.
     resume_dir: Path | None = field(default_factory=lambda: _optional_path("SOLFISH_RESUME_DIR"))
     resume_main: str = field(
-        default_factory=lambda: os.environ.get("SOLFISH_RESUME_MAIN", "resume-ntu-en.tex")
+        default_factory=lambda: os.environ.get("SOLFISH_RESUME_MAIN", "resume-en.tex")
     )
+    # Opens résumé pull requests (fine-grained, that repo only: Pull requests read/write).
+    # Without it the branch is still pushed and the reply carries a link to open the PR by hand.
+    github_token: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_GITHUB_TOKEN"))
     # Web search: a self-hosted SearXNG wins when set, else Tavily (free tier: 1,000 a month).
     searxng_url: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_SEARXNG_URL"))
     tavily_api_key: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_TAVILY_API_KEY"))
