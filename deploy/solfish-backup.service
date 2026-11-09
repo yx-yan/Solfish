@@ -1,0 +1,7 @@
+[Unit]
+Description=Snapshot the Solfish database
+
+[Service]
+Type=oneshot
+User=USER
+ExecStart=/home/USER/solfish/deploy/backup.sh

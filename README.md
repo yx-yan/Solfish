@@ -121,6 +121,24 @@ approvals, step limits, refusals, interrupted turns, and that history stays appe
 The eval suite measures what the tests can't: whether the model, given these prompts and
 tools, actually does the right thing.
 
+## Running it on a server
+
+Telegram uses long polling, so a small VPS with no open ports beyond SSH is enough (1 GB RAM;
+Ubuntu 24.04 with `git sqlite3 python3.12-venv rsync`). [`deploy/`](deploy/) has the pieces:
+
+```bash
+SOLFISH_DEPLOY_HOST=user@host deploy/deploy.sh          # push code, install, (re)start the service
+SOLFISH_DEPLOY_HOST=user@host deploy/deploy.sh logs     # follow the log
+SOLFISH_DEPLOY_HOST=user@host deploy/deploy.sh backup   # copy the newest daily snapshot to the Mac
+```
+
+The first time, copy `~/.solfish/` (without `browser/`) and `.env` into `~/.solfish/` on the
+server, `chmod 600` them, and stop any bot on the laptop: two bots on one token steal each
+other's updates. The server then holds the only copy of the data; a timer snapshots the database
+at 04:00 and keeps 14 days. The web UI stays on the server's 127.0.0.1; reach it with
+`ssh -L 8765:127.0.0.1:8765 user@host`. Skills that open a browser (forms, 小红书/知乎 handoff)
+still need the Mac.
+
 ## Roadmap
 
 - [x] Agent loop, tool registry, approval gate, tracing
