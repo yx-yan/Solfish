@@ -16,7 +16,7 @@ from .skills.memory import recent_memories
 from .tools import ToolRegistry
 from .trace import Tracer
 
-DEFAULT_SKILLS = ("core", "memory", "jobs", "resume", "content", "research", "forms", "spark")
+DEFAULT_SKILLS = ("core", "memory", "web", "jobs", "resume", "content", "research", "forms", "spark")
 
 PERSONA = """\
 You are Solfish, a personal agent working for one person: the user. You act through tools; \
