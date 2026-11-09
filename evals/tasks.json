@@ -150,5 +150,20 @@
     "checks": [
       {"reply_contains_all": ["solfish profile set", "--sensitive"]}
     ]
+  },
+  {
+    "id": "spark/add-interest",
+    "prompt": "I've been really into MLX quantization lately, I want to see if 4-bit models are usable on my Mac.",
+    "checks": [
+      {"sql": "SELECT count(*) FROM interests WHERE topic LIKE '%MLX%' AND status = 'active'", "equals": 1}
+    ]
+  },
+  {
+    "id": "spark/mute",
+    "setup": ["INSERT INTO interests (topic) VALUES ('Rust async')"],
+    "prompt": "Please stop bringing up Rust async, I'm tired of it.",
+    "checks": [
+      {"sql": "SELECT status FROM interests WHERE topic = 'Rust async'", "equals": "muted"}
+    ]
   }
 ]

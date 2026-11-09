@@ -16,7 +16,7 @@ from .skills.memory import recent_memories
 from .tools import ToolRegistry
 from .trace import Tracer
 
-DEFAULT_SKILLS = ("core", "memory", "jobs", "resume", "content", "research", "forms")
+DEFAULT_SKILLS = ("core", "memory", "jobs", "resume", "content", "research", "forms", "spark")
 
 PERSONA = """\
 You are Solfish, a personal agent working for one person: the user. You act through tools; \
@@ -37,6 +37,10 @@ def build_system(skills: list[Skill], db: sqlite3.Connection) -> list[dict[str, 
             notes = "\n".join(f"- #{r['id']} {r['content']}" for r in rows)
             blocks.append({"type": "text", "text": f"What you remember (newest first):\n{notes}"})
     return blocks
+
+
+def new_client(settings: Settings) -> anthropic.Anthropic:
+    return anthropic.Anthropic(base_url=settings.base_url, api_key=settings.api_key)
 
 
 def new_session_id() -> str:
@@ -67,7 +71,7 @@ def build_agent(
     session = session_id or new_session_id()
     tracer = Tracer(settings.traces_dir / f"{session}.jsonl" if trace else None)
     agent = Agent(
-        client or anthropic.Anthropic(base_url=settings.base_url, api_key=settings.api_key),
+        client or new_client(settings),
         registry,
         build_system(loaded, ctx.db),
         settings,
