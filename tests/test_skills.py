@@ -75,15 +75,27 @@ def test_update_missing_application(tools):
 
 @pytest.fixture
 def resume_tools(settings, tmp_path, monkeypatch):
-    repo = tmp_path / "resume"
-    repo.mkdir()
-    (repo / "resume-ntu-en.tex").write_text(r"\documentclass{resume-ntu}\name{Yan}", encoding="utf-8")
-    (repo / "resume-ntu.cls").write_text("% class", encoding="utf-8")
+    # A real git repo with a local bare repo as origin, so proposals push for real (offline).
+    origin, repo = tmp_path / "origin.git", tmp_path / "resume"
+    resume.git(tmp_path, "init", "--quiet", "--bare", "-b", "main", str(origin))
+    resume.git(tmp_path, "init", "--quiet", "-b", "main", str(repo))
+    (repo / "resume-en.tex").write_text(r"\documentclass{resume-en}\name{Yan}", encoding="utf-8")
+    (repo / "resume-zh.tex").write_text(r"\documentclass{resume-zh}\name{严}", encoding="utf-8")
+    (repo / "resume-en.cls").write_text("% class", encoding="utf-8")
+    (repo / "resume-en.pdf").write_bytes(b"%PDF old")
+    (repo / ".gitignore").write_text("draft.tex\nassets/photo.jpg\n", encoding="utf-8")
+    (repo / "draft.tex").write_text("private plans", encoding="utf-8")
+    (repo / "assets").mkdir()
+    (repo / "assets" / "photo.jpg").write_bytes(b"jpg")
+    for args in (("config", "user.name", "Test"), ("config", "user.email", "test@test"),
+                 ("add", "."), ("commit", "--quiet", "-m", "init"),
+                 ("remote", "add", "origin", str(origin)), ("push", "--quiet", "origin", "main")):
+        resume.git(repo, *args)
     smtp = Smtp(host="smtp.test", port=465, user="me", password="pw", sender="me@test")
     s = replace(settings, resume_dir=repo, smtp=smtp)
 
     def fake_latex(workdir, filename):
-        assert (workdir / "resume-ntu.cls").exists()  # built inside a copy of the repo
+        assert (workdir / "resume-en.cls").exists()  # built inside a copy of the repo
         stem = filename.removesuffix(".tex")
         pages = 2 if "LONG" in (workdir / filename).read_text() else 1
         (workdir / f"{stem}.pdf").write_bytes(b"%PDF")
@@ -133,6 +145,87 @@ def test_send_application_refuses_escape(resume_tools):
         "attachments": ["../solfish.db"],
     })
     assert r.is_error and not sent
+
+
+def test_read_base_resume_only_reads_tracked_tex(resume_tools):
+    tools, _, _ = resume_tools
+    assert "严" in tools.execute("read_base_resume", {"file": "resume-zh.tex"}).content
+    for name in ("draft.tex", "../resume/resume-en.tex", "resume-en.cls"):
+        r = tools.execute("read_base_resume", {"file": name})
+        assert r.is_error and "private plans" not in r.content
+
+
+def origin_file(s, branch, path):
+    return resume.git(s.resume_dir, "show", f"origin/{branch}:{path}")
+
+
+def propose(tools, tex_en="\\name{Yan} Quoth", **extra):
+    return tools.execute("propose_resume_change", {
+        "name": "add-quoth", "title": "Add Quoth", "summary": "New project.",
+        "changes": [{"path": "resume-en.tex", "content": tex_en},
+                    {"path": "resume-zh.tex", "content": "\\name{严} Quoth"}],
+        **extra,
+    })
+
+
+def test_propose_resume_change_pushes_a_branch(resume_tools):
+    tools, s, _ = resume_tools
+    r = propose(tools)
+    assert not r.is_error, r.content
+    assert "SOLFISH_GITHUB_TOKEN" in r.content or "isn't on GitHub" in r.content
+    resume.git(s.resume_dir, "fetch", "--quiet", "origin")
+    assert origin_file(s, "solfish/add-quoth", "resume-zh.tex") == "\\name{严} Quoth"
+    assert origin_file(s, "solfish/add-quoth", "resume-en.pdf") == "%PDF"  # committed PDF rebuilt
+    assert "Quoth" not in origin_file(s, "main", "resume-en.tex")  # main untouched
+    assert "Quoth" not in (s.resume_dir / "resume-en.tex").read_text()  # so is the working copy
+    files = resume.git(s.resume_dir, "ls-tree", "-r", "--name-only", "origin/solfish/add-quoth")
+    assert "photo.jpg" not in files and "draft.tex" not in files
+    assert resume.git(s.resume_dir, "worktree", "list").count("\n") == 0  # worktree cleaned up
+
+
+def test_propose_again_revises_the_same_branch(resume_tools):
+    tools, s, _ = resume_tools
+    propose(tools)
+    assert not propose(tools, tex_en="\\name{Yan} Quoth, revised").is_error
+    log = resume.git(s.resume_dir, "log", "--format=%s", "origin/solfish/add-quoth")
+    assert log.splitlines() == ["Add Quoth", "Add Quoth", "init"]
+
+
+def test_propose_refuses_overflow_untracked_and_no_op(resume_tools):
+    tools, s, _ = resume_tools
+    assert "one page" in propose(tools, tex_en="LONG").content
+    r = tools.execute("propose_resume_change", {
+        "name": "x", "title": "x", "summary": "x",
+        "changes": [{"path": "draft.tex", "content": "x"}],
+    })
+    assert r.is_error and "tracked" in r.content
+    r = tools.execute("propose_resume_change", {
+        "name": "x", "title": "x", "summary": "x",
+        "changes": [{"path": "resume-en.tex", "content": r"\documentclass{resume-en}\name{Yan}"}],
+    })
+    assert r.is_error and "nothing to propose" in r.content
+    assert not resume.git(s.resume_dir, "ls-remote", "--heads", "origin", "solfish/*")
+
+
+def test_propose_opens_a_pull_request(resume_tools, monkeypatch):
+    tools, s, _ = resume_tools
+    opened = []
+    monkeypatch.setattr(resume, "github_repo", lambda url: "yx-yan/resume")
+    monkeypatch.setattr(resume, "open_pr", lambda *a: opened.append(a) or "https://github.com/pr/1")
+    registry = ToolRegistry(SKILLS["resume"](
+        Context(settings=replace(s, github_token="t"), db=open_db(s))).tools)
+    r = propose(registry)
+    assert "Opened https://github.com/pr/1" in r.content
+    assert opened == [("t", "yx-yan/resume", "solfish/add-quoth", "Add Quoth", "New project.")]
+
+
+@pytest.mark.parametrize("url", [
+    "https://github.com/yx-yan/resume.git", "git@github.com:yx-yan/resume.git",
+    "https://token@github.com/yx-yan/resume", "ssh://git@github.com/yx-yan/resume.git",
+])
+def test_github_repo_from_remote(url):
+    assert resume.github_repo(url) == "yx-yan/resume"
+    assert resume.github_repo("/tmp/origin.git") is None
 
 
 # --- content --------------------------------------------------------------------------------

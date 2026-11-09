@@ -1,9 +1,15 @@
-"""Résumé skill: tailor the LaTeX résumé to a job description, build it, and send applications.
+"""Résumé skill: tailor the LaTeX résumé to a job description, build it, send applications,
+and propose changes to the master résumé.
 
-The résumé repo (`SOLFISH_RESUME_DIR`) is only ever read. A tailored version is built in a
-temporary copy of that repo, so the class file and fonts resolve, and the resulting .tex and
-.pdf land in the workspace under `resumes/`. LaTeX runs with shell escape off: the model writes
-the source, so it must not be able to run commands through `\\write18`.
+The résumé repo (`SOLFISH_RESUME_DIR`) is never written in place. A tailored version is built
+in a temporary copy of that repo, so the class file and fonts resolve, and the resulting .tex
+and .pdf land in the workspace under `resumes/`. LaTeX runs with shell escape off: the model
+writes the source, so it must not be able to run commands through `\\write18`.
+
+Changes to the master résumé go up as a pull request: a temporary git worktree on the latest
+`main`, rebuilt and page-checked, pushed to a `solfish/<name>` branch. Merging is the user's
+review, so the agent can never change the résumé the user sends out on its own. Only tracked
+top-level .tex files can be read or changed; ignored local drafts stay off the model's input.
 
 Applying by email is automated (SMTP, approval required). Job portals (Workday, LinkedIn, ...)
 are not: they have no API for applicants, so the agent prepares the package and the user clicks
@@ -21,6 +27,7 @@ from datetime import date
 from email.message import EmailMessage
 from pathlib import Path
 
+import httpx2
 from pydantic import BaseModel, Field
 
 from ..config import Smtp
@@ -30,10 +37,38 @@ from .base import Context, Skill, slugify
 from .core import resolve_in
 
 LATEX_TIMEOUT_S = 120
+GIT_TIMEOUT_S = 60
+BASE_BRANCH = "main"
+BRANCH_PREFIX = "solfish/"
+TEX_NAME = re.compile(r"^[\w.-]+\.tex$")
+BRANCH_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+GITHUB_REMOTE = re.compile(
+    r"^(?:https://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)"
+    r"([\w.-]+/[\w.-]+?)(?:\.git)?/?$"
+)
 
 
-class NoArgs(BaseModel):
-    pass
+class ReadArgs(BaseModel):
+    file: str | None = Field(
+        default=None, description="Another .tex in the repo, e.g. 'resume-zh.tex'. Default: the main résumé."
+    )
+
+
+class FileChange(BaseModel):
+    path: str = Field(description="A tracked .tex file at the top of the résumé repo, e.g. 'resume-en.tex'.")
+    content: str = Field(description="The file's complete new content.")
+
+
+class ProposeArgs(BaseModel):
+    name: str = Field(
+        description="Short English name for the change, e.g. 'add-quoth-project'. "
+        "Using the name of an open proposal adds a commit to that pull request."
+    )
+    title: str = Field(description="Pull request title, which is also the commit message.")
+    summary: str = Field(
+        description="Pull request description: what changed and why, and any fact the user should check."
+    )
+    changes: list[FileChange] = Field(min_length=1)
 
 
 class BuildArgs(BaseModel):
@@ -90,6 +125,47 @@ def send_mail(smtp: Smtp, msg: EmailMessage) -> None:
         server.send_message(msg)
 
 
+def git(repo: Path, *args: str) -> str:
+    try:
+        r = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True,
+                           timeout=GIT_TIMEOUT_S, check=False)
+    except subprocess.TimeoutExpired:
+        raise ToolError(f"git {args[0]} timed out after {GIT_TIMEOUT_S}s.") from None
+    if r.returncode:
+        raise ToolError(f"git {args[0]} failed: {(r.stderr or r.stdout).strip()[-500:]}")
+    return r.stdout.strip()
+
+
+def tracked_tex(repo: Path) -> set[str]:
+    """Top-level .tex files under version control; ignored local drafts are left out."""
+    try:
+        return {f for f in git(repo, "ls-files", "--", "*.tex").splitlines() if "/" not in f}
+    except ToolError:
+        return set()  # not a git repo: only the main résumé is readable
+
+
+def github_repo(remote: str) -> str | None:
+    """'owner/name' from a GitHub remote URL (https or ssh), else None."""
+    m = GITHUB_REMOTE.match(remote)
+    return m.group(1) if m else None
+
+
+def open_pr(token: str, repo: str, branch: str, title: str, body: str) -> str:
+    """Open a pull request for `branch`, or find the one already open. Returns its URL."""
+    api = f"https://api.github.com/repos/{repo}/pulls"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    with httpx2.Client(timeout=30.0, headers=headers) as client:
+        found = client.get(api, params={"head": f"{repo.split('/')[0]}:{branch}", "state": "open"})
+        if found.is_success and found.json():
+            return found.json()[0]["html_url"]
+        r = client.post(api, json={"title": title, "body": body, "head": branch, "base": BASE_BRANCH})
+    if not r.is_success:
+        raise ToolError(
+            f"Pushed {branch}, but GitHub refused the pull request ({r.status_code}): {r.text[:300]}"
+        )
+    return r.json()["html_url"]
+
+
 def load(ctx: Context) -> Skill:
     settings, db = ctx.settings, ctx.db
     db.executescript(jobs.SCHEMA)
@@ -104,10 +180,16 @@ def load(ctx: Context) -> Skill:
             )
         return d
 
-    @tool(NoArgs)
-    def read_base_resume(_: NoArgs) -> str:
-        """Read the master LaTeX résumé. Start from this when tailoring for a job."""
-        return (resume_repo() / settings.resume_main).read_text(encoding="utf-8")
+    @tool(ReadArgs)
+    def read_base_resume(args: ReadArgs) -> str:
+        """Read the master LaTeX résumé (or another tracked .tex in its repo). Start from this when
+        tailoring for a job or proposing a change."""
+        repo = resume_repo()
+        name = args.file or settings.resume_main
+        allowed = tracked_tex(repo) | {settings.resume_main}
+        if name not in allowed:
+            raise ToolError(f"{name!r} isn't a tracked .tex file; choose from {', '.join(sorted(allowed))}.")
+        return (repo / name).read_text(encoding="utf-8")
 
     @tool(BuildArgs, needs_approval=True)
     def build_resume(args: BuildArgs) -> str:
@@ -167,6 +249,82 @@ def load(ctx: Context) -> Skill:
         n = len(args.attachments)
         return f"Sent to {args.to} with {n} attachment(s); #{args.application_id} is now applied."
 
+    def commit_change(work: Path, repo: Path, branch: str, args: ProposeArgs) -> list[str]:
+        """Write, rebuild and page-check the changed files in the worktree, then commit and push."""
+        paths = list(dict.fromkeys(c.path for c in args.changes))
+        for c in args.changes:
+            (work / c.path).write_text(c.content, encoding="utf-8")
+        if not git(work, "status", "--porcelain", "--", *paths):
+            raise ToolError("These files already match the résumé on GitHub; nothing to propose.")
+        # Ignored files the build needs, such as the photo the Chinese résumé embeds.
+        if (repo / "assets").is_dir():
+            (work / "assets").mkdir(exist_ok=True)
+            for f in (repo / "assets").iterdir():
+                if f.is_file() and not (work / "assets" / f.name).exists():
+                    shutil.copy(f, work / "assets" / f.name)
+
+        to_add = list(paths)
+        for path in paths:
+            log = run_latex(work, path)
+            pdf = Path(path).with_suffix(".pdf").name
+            if not (work / pdf).exists() or "Fatal error" in log or re.search(r"^!", log, re.M):
+                raise ToolError(f"{path} doesn't compile:\n{latex_errors(log)}")
+            pages = page_count(log)
+            if pages != 1:
+                raise ToolError(
+                    f"{path} comes out at {pages or '?'} pages; it must fit on one page. "
+                    "Cut or tighten, then propose again."
+                )
+            if git(work, "ls-files", "--", pdf):  # a committed PDF (resume-en.pdf) must match its source
+                to_add.append(pdf)
+        git(work, "add", "--", *to_add)
+        git(work, "commit", "--quiet", "-m", args.title)
+        git(work, "push", "--quiet", "origin", f"HEAD:refs/heads/{branch}")
+        return paths
+
+    @tool(ProposeArgs)
+    def propose_resume_change(args: ProposeArgs) -> str:
+        """Change the master résumé through a pull request. Rebuilds each changed file, checks it
+        fits on one page, and pushes a solfish/<name> branch; the user reviews and merges."""
+        repo = resume_repo()
+        if not BRANCH_NAME.match(args.name):
+            raise ToolError(
+                "Name the change in lowercase English words joined by '-', e.g. 'add-quoth-project'."
+            )
+        allowed = tracked_tex(repo)
+        for c in args.changes:
+            if c.path not in allowed:
+                raise ToolError(
+                    f"{c.path!r} isn't a tracked .tex file in the résumé repo; "
+                    f"choose from {', '.join(sorted(allowed)) or 'none (is it a git repo?)'}."
+                )
+        github = github_repo(git(repo, "remote", "get-url", "origin"))
+        branch = BRANCH_PREFIX + args.name
+
+        git(repo, "fetch", "--quiet", "origin")
+        # Revising an open proposal builds on its branch, so the change lands in the same PR.
+        on_branch = bool(git(repo, "ls-remote", "--heads", "origin", branch))
+        start = f"origin/{branch}" if on_branch else f"origin/{BASE_BRANCH}"
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "resume"
+            git(repo, "worktree", "add", "--detach", "--quiet", str(work), start)
+            try:
+                paths = commit_change(work, repo, branch, args)
+            finally:
+                git(repo, "worktree", "remove", "--force", str(work))
+
+        files = ", ".join(paths)
+        if github is None:
+            return f"Pushed {files} to {branch}. origin isn't on GitHub, so open the pull request there."
+        if not settings.github_token:
+            return (
+                f"Pushed {files} to {branch}. SOLFISH_GITHUB_TOKEN isn't set, so give the user this "
+                f"link to open the pull request: https://github.com/{github}/compare/{BASE_BRANCH}...{branch}?expand=1"
+            )
+        url = open_pr(settings.github_token, github, branch, args.title, args.summary)
+        verb = "Updated" if on_branch else "Opened"
+        return f"{verb} {url} ({files}). Nothing changes until the user merges it."
+
     return Skill(
         name="resume",
         instructions=(
@@ -176,7 +334,14 @@ def load(ctx: Context) -> Skill:
             "résumé lacks, tell the user instead. Keep the LaTeX macros and layout unchanged and "
             "the result on one page; rebuild until it is. Cover letters go in the workspace as "
             "cover-letters/<name>.md. send_application is only for postings that take email "
-            "applications; for job portals, prepare the files and tell the user to submit."
+            "applications; for job portals, prepare the files and tell the user to submit.\n"
+            "To change the master résumé itself (new experience, better wording), use "
+            "propose_resume_change; it opens a pull request the user reviews. The same rule "
+            "holds: only facts the user gave you or that are already there; ask for missing "
+            "details instead of guessing. If the résumé exists in more than one language (e.g. "
+            "resume-en.tex and resume-zh.tex), read each and change them together in one "
+            "proposal, with the same facts, numbers and dates in the same order. To revise a "
+            "proposal after the user's feedback, propose again under the same name."
         ),
-        tools=[read_base_resume, build_resume, send_application],
+        tools=[read_base_resume, build_resume, send_application, propose_resume_change],
     )

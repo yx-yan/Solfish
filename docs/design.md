@@ -91,12 +91,36 @@ prompt or tool change can be judged on numbers.
   retries on another model in the same call.
 - Non-streaming requests with `max_tokens=16000`; streaming is on the roadmap for the web UI.
 
-## 10. Résumé: the source repo is read-only
+## 10. Résumé: never written in place; the master changes through pull requests
 
 `build_resume` copies the résumé repo to a temp dir, writes the tailored `.tex` there and
 compiles it, so the class file and fonts resolve by relative path exactly as in the real repo,
-and the master copy can never be overwritten by the agent. Outputs land in the workspace. Two
-guards matter more than they look:
+and the master copy can never be overwritten by the agent. Outputs land in the workspace.
+
+At first the master résumé was read-only, full stop. But keeping it current (a new project, a
+sharper line) is exactly the work I want to hand off, so `propose_resume_change` changes it the
+way a colleague would: a pull request.
+
+- **A worktree, not my checkout.** The change is made in a temporary `git worktree` on the
+  latest `origin/main`, so my working copy and any uncommitted edits are never touched, and the
+  agent works from what is actually on GitHub.
+- **Built and page-checked before it is pushed.** Every changed file is compiled and must come
+  out at one page; a committed PDF (`resume-en.pdf`) is rebuilt and committed with its source so
+  they never disagree. A proposal that doesn't fit never leaves the machine.
+- **No approval prompt; the merge is the approval.** Pushing a `solfish/<name>` branch changes
+  nothing I send out, and closing the PR undoes it. Asking first would mean reviewing the same
+  diff twice, once in a worse viewer. This is the one side-effecting tool without
+  `needs_approval`, on purpose.
+- **Revisions land in the same PR.** Proposing again under the same name builds on that branch.
+- **Only tracked `.tex` files.** The repo holds ignored local drafts (a future target résumé
+  that must never be published); the tools refuse to read or write anything git doesn't track,
+  so those never reach the model, let alone a commit.
+- **Languages stay in sync by instruction.** The English and Chinese résumés must carry the same
+  facts in the same order, so the skill tells the model to change both in one proposal.
+
+The GitHub token only needs pull requests on that one repo; pushing uses the repo's own git
+credentials. Without a token the branch is still pushed and the reply carries a link to open
+the PR. Two guards matter more than they look:
 
 - **Shell escape off.** The model writes the LaTeX, and `\write18` would let LaTeX run shell
   commands. XeLaTeX runs with `-no-shell-escape`.
