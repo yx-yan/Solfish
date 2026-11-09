@@ -284,22 +284,36 @@ currently on.
 ## 17. Spark: conversations Solfish starts
 
 Talking to an assistant usually means bringing it a question, and after a while I run out of
-questions. The spark skill turns that around: Solfish keeps a list of what I like talking about
-and opens a conversation itself, one specific point and one easy question.
+questions. The spark skill turns that around: Solfish texts me first, several times a day at
+random, like a friend would. The point is for it to get to know me, help me grow, and find
+things worth discussing and learning together.
 
+- **Four kinds of spark.** One specific point about an *interest*; how a *goal* is going (with a
+  next step or a question to reflect on); a *follow-up* on something I said in the last three
+  days; a *check-in* on my day, at most once a day. Kinds with nothing behind them are skipped,
+  and the rest are drawn at random by weight.
+- **Work hours change the mix, not the schedule.** On weekdays 9–18 I still get sparks, but no
+  check-ins, and the opener is told I'll answer later, so it's something worth coming back to.
+- **Random, but polite.** Each day gets a fresh random plan (5–8 times between 9:00 and 23:00 by
+  default, both settings). A planned time only sends if the last spark was at least 45 minutes
+  ago, doubling for each spark in a row I ignored (up to 12 hours), and if I haven't written
+  anything in the last 30 minutes: a spark switches the Telegram chat to its own session, which
+  would cut into a conversation in progress. Missed times collapse into one. Answering resets it.
 - **A seeded session, not a special mode.** A spark is an ordinary session whose history starts
-  with `user: "[spark] <topic>"` and `assistant: <opener>`. The history still starts with a user
-  turn and only grows, so my reply is just the next turn: same loop, same caching, resumable from
-  any channel. The assistant turn is stored as text blocks, the shape the loop stores every
-  assistant turn in.
-- **The opener is one call without tools.** Writing three sentences doesn't need the loop, and
-  without tools the model can't wander off. It sees the interest and the memory snapshot, and is
-  told not to invent facts or links.
-- **Picking is plain arithmetic.** Weight times freshness, where an interest sparked within the
-  last 72 hours is partly rested. Saying the same topic again adds weight; muting takes it out.
-  No model call, so it's testable with a fixed clock.
-- **Started by hand for now.** `/spark` in Telegram, `solfish spark` in the terminal. Mining
-  interests from my chats, projects and feeds, a scheduler inside `serve` that respects quiet
-  hours and backs off when I don't answer, and learning from replies come next, each on top of
-  this seam.
-
+  with `user: "[spark] ..."` and `assistant: <opener>`. The history still starts with a user turn
+  and only grows, so my reply is just the next turn: same loop, same caching, resumable from any
+  channel. The assistant turn is stored as text blocks, the shape the loop stores every turn in.
+- **The opener is one call without tools.** Three sentences don't need the loop, and without
+  tools the model can't wander off. It sees the card, the memory snapshot, what I said in the
+  last few days (my own typed messages only), and its last five openers so it doesn't repeat
+  itself. Local time goes in the user message, not the system prompt.
+- **Friend in conversation, assistant at work.** The skill's instructions tell the model to talk
+  like a curious friend when I'm chatting or learning (react, share a view, one follow-up
+  question, not an interrogation) and to stay brief when I've asked it to do something. It saves
+  what it learns: interests and goals with `add_interest`, other facts with `remember`.
+- **Picking is plain arithmetic.** Interests and goals score weight times freshness (72 hours to
+  rest after a spark). Saying a topic again adds weight; muting takes it out. Everything about
+  *when* and *what* is testable with a fixed clock and a seeded random generator; only the
+  wording needs the model.
+- **Not yet:** news, papers and posts as material for sparks (they need real sources, and the
+  opener must never invent them), and learning which kinds of spark I answer.

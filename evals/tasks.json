@@ -165,5 +165,12 @@
     "checks": [
       {"sql": "SELECT status FROM interests WHERE topic = 'Rust async'", "equals": "muted"}
     ]
+  },
+  {
+    "id": "spark/add-goal",
+    "prompt": "I want to get much better at system design before my interviews next spring.",
+    "checks": [
+      {"sql": "SELECT count(*) FROM interests WHERE kind = 'goal' AND status = 'active'", "equals": 1}
+    ]
   }
 ]

@@ -60,7 +60,7 @@ flowchart LR
 | Sessions | [`session.py`](src/solfish/session.py) | Conversations stored append-only and resumable; one manager runs turns for every channel and routes approvals from any of them |
 | Web UI | [`server.py`](src/solfish/server.py), [`web/`](src/solfish/web/) | FastAPI + SSE + plain JS: live thinking and tool calls, approval buttons, workspace downloads; model output treated as hostile (no raw HTML, strict CSP) |
 | Telegram | [`channels/telegram.py`](src/solfish/channels/telegram.py) | Long-polling bot on the raw Bot API: one live "working" message per turn, Allow/Deny buttons for approvals from any session, answers one chat id only |
-| Spark | [`skills/spark.py`](src/solfish/skills/spark.py) | Solfish starts the conversation: picks one of my interests and opens a seeded session with a short, specific question |
+| Spark | [`skills/spark.py`](src/solfish/skills/spark.py) | Solfish texts first, 5–8 random times a day: an interest, a goal check-in, a follow-up or how my day is going; backs off when ignored, never cuts into a chat |
 | Memory | [`skills/memory.py`](src/solfish/skills/memory.py) | Persistent notes; recent ones in the system prompt, older ones searchable |
 | Safety | `needs_approval` flag | Writes and deletes wait for a human `y` |
 | Observability | [`trace.py`](src/solfish/trace.py) | JSONL trace per session: every model call, tool call, token count, cache hit and dollar cost |
@@ -164,8 +164,9 @@ still need the Mac.
 - [ ] macOS menu bar app with a quick-ask hotkey
 - [ ] Scheduled runs (morning brief: deadlines, follow-ups)
 - [x] spark: Solfish starts conversations from my interests (`/spark`, `solfish spark`)
-- [ ] spark: mine interests from chats, projects and feeds; scheduled sparks with quiet hours and
-  back-off; learn from replies
+- [x] spark: random sparks through the day (interests, goals, follow-ups, check-ins) with
+  back-off; friend-like conversation style
+- [ ] spark: news, papers and project activity as material; learn which sparks I answer
 
 ## License
 

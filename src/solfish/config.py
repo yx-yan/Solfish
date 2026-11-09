@@ -30,6 +30,12 @@ def home_dir() -> Path:
     return Path(os.environ.get("SOLFISH_HOME", "~/.solfish")).expanduser()
 
 
+def _range(var: str, default: str) -> tuple[int, int]:
+    """"5-8" -> (5, 8); a single number "0" -> (0, 0)."""
+    low, _, high = os.environ.get(var, default).partition("-")
+    return int(low), int(high or low)
+
+
 def _optional_path(var: str) -> Path | None:
     value = os.environ.get(var)
     return Path(value).expanduser() if value else None
@@ -112,6 +118,10 @@ class Settings:
     telegram_chat_id: int | None = field(
         default_factory=lambda: int(v) if (v := os.environ.get("SOLFISH_TELEGRAM_CHAT_ID")) else None
     )
+    # Conversations Solfish starts through Telegram: how many a day (random), and the hours they
+    # fall in (start inclusive, end exclusive). "0" turns them off.
+    sparks_per_day: tuple[int, int] = field(default_factory=lambda: _range("SOLFISH_SPARKS_PER_DAY", "5-8"))
+    spark_hours: tuple[int, int] = field(default_factory=lambda: _range("SOLFISH_SPARK_HOURS", "9-23"))
 
     @property
     def db_path(self) -> Path:

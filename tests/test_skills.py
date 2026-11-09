@@ -831,8 +831,11 @@ def test_final_button_detection(text, final):
 def test_interests_roundtrip(tools):
     assert "Saved interest #1" in tools.execute("add_interest", {"topic": "MLX quantization"}).content
     again = tools.execute("add_interest", {"topic": "mlx  Quantization", "evidence": "asked twice"})
-    assert "already existed" in again.content
-    assert "weight 1.5" in tools.execute("list_interests", {}).content
-    assert tools.execute("mute_interest", {"id": 1}).content == "Muted interest #1."
-    assert tools.execute("list_interests", {}).content == "No interests yet."
+    assert "Interest #1 already existed" in again.content
+    goal = tools.execute("add_interest", {"topic": "Land an AI job", "kind": "goal"})
+    assert goal.content == "Saved goal #2."
+    listed = tools.execute("list_interests", {}).content
+    assert listed.index("🎯 Land an AI job") < listed.index("MLX quantization (weight 1.5")
+    assert tools.execute("mute_interest", {"id": 1}).content == "Muted #1."
+    assert "MLX" not in tools.execute("list_interests", {}).content
     assert tools.execute("mute_interest", {"id": 9}).is_error
