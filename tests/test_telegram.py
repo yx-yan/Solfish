@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import random
 import threading
 import time
+from dataclasses import replace
+from datetime import datetime, timedelta
 
 import httpx2
 from conftest import FakeClient, message, text, tool_use
 
-from solfish.channels.telegram import BotApi, TelegramBot, split_message
+from solfish.channels.telegram import BotApi, Sparker, TelegramBot, split_message
 from solfish.session import SessionManager
 
 ME = 42
@@ -160,12 +163,13 @@ def test_commands(settings):
 
 def test_spark_opens_a_session_you_reply_in(settings):
     manager, bot, tg = make(settings, message(text("Still on MLX?")), message(text("Nice.")))
-    bot.handle(say("/spark"))
-    assert "know what you like" in tg.sent()[-1]["text"]
+    bot.spark(now=datetime(2026, 11, 9, 11, 0))  # at work, knowing nothing: nothing to say
+    assert "don't know you" in tg.sent()[-1]["text"]
 
     bot.handle(say("/interests"))
     assert tg.sent()[-1]["text"] == "No interests yet."
     manager.store.db.execute("INSERT INTO interests (topic) VALUES ('MLX')")
+    manager.store.db.commit()
     bot.handle(say("/spark"))
     assert tg.sent()[-1]["text"] == "Still on MLX?"
     sid = bot.session
@@ -176,6 +180,27 @@ def test_spark_opens_a_session_you_reply_in(settings):
     sent = manager.client.requests[-1]["messages"]
     assert [m["role"] for m in sent] == ["user", "assistant", "user"]
     assert sent[1]["content"] == [{"type": "text", "text": "Still on MLX?"}]
+
+
+def test_sparker_sends_at_planned_times_and_backs_off(settings):
+    settings = replace(settings, sparks_per_day=(3, 3), spark_hours=(9, 23))
+    manager, bot, tg = make(settings, *(message(text(f"q{i}")) for i in range(3)))
+    sparker = Sparker(bot, random.Random(7))
+    manager.store.db.executescript("INSERT INTO interests (topic) VALUES ('MLX'), ('Rust');")
+    day = datetime(2026, 11, 14, 8, 0)  # a Saturday
+    assert not sparker.tick(day)  # plans the day, nothing due yet
+    first, second, third = sparker.plan
+    assert sparker.tick(first) and tg.sent()[-1]["text"] == "q0"
+    # Missed times collapse into one, and an ignored spark doubles the wait.
+    later = first + timedelta(minutes=80)
+    sparker.plan = [first + timedelta(minutes=50), later]
+    assert not sparker.tick(later) and sparker.plan == []
+    assert len(tg.sent()) == 1
+
+    sparker.plan = [first + timedelta(minutes=91)]
+    assert sparker.tick(first + timedelta(minutes=91)) and tg.sent()[-1]["text"] == "q1"
+    assert not sparker.tick(datetime(2026, 11, 15, 8, 0))  # a new day, a new plan
+    assert 0 < len(sparker.plan) <= 3
 
 
 def test_poll_reads_updates_and_advances_the_offset(settings):

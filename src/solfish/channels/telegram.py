@@ -14,16 +14,18 @@ from __future__ import annotations
 
 import json
 import queue
+import random
 import sys
 import threading
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 import httpx2
 
 from ..config import Settings
 from ..session import Busy, SessionManager
-from ..skills import spark
+from ..skills import open_db, spark
 
 LIMIT = 4000  # Telegram's cap is 4096 UTF-16 units; this leaves room for emoji
 MAX_PREVIEW = 3500  # of a post awaiting approval; leaves room for the rest of the message
@@ -216,20 +218,25 @@ class TelegramBot:
         else:
             self.send(HELP)
 
-    def spark(self) -> None:
-        """Start a conversation Solfish picked, and make it the current session."""
-        self.api("sendChatAction", chat_id=self.chat_id, action="typing")
+    def spark(self, *, scheduled: bool = False, now: datetime | None = None) -> bool:
+        """Start a conversation Solfish picked, and make it the current session. A scheduled
+        spark stays silent when it fails or has nothing to say; /spark tells you."""
+        if not scheduled:
+            self.api("sendChatAction", chat_id=self.chat_id, action="typing")
         try:
             started = spark.start(self.manager.store, self.manager.model_client(),
-                                  self.manager.settings, "telegram")
+                                  self.manager.settings, "telegram", now=now)
         except Exception as e:
-            self.send(f"⚠️ Couldn't start a conversation: {e}")
-            return
+            if not scheduled:
+                self.send(f"⚠️ Couldn't start a conversation: {e}")
+            raise
         if started is None:
-            self.send("I don't know what you like talking about yet. Tell me, and I'll remember.")
-            return
+            if not scheduled:
+                self.send("I don't know you well enough yet. Tell me what you're into, and I'll remember.")
+            return False
         self.session, opener = started
         self.send(opener)
+        return True
 
     def _message(self, text: str) -> None:
         if self.session is None:
@@ -305,6 +312,38 @@ class TelegramBot:
             self.send(f"⚠️ {data['message']}")
 
 
+class Sparker:
+    """Texts the user first at random times: a fresh random plan every day, and each planned
+    time sends a spark if `spark.may_send` agrees (it backs off while sparks go unanswered)."""
+
+    def __init__(self, bot: TelegramBot, rng: random.Random | None = None) -> None:
+        self.bot = bot
+        self.rng = rng or random.Random()
+        self.db = open_db(bot.manager.settings)
+        spark.migrate(self.db)
+        self.day = None
+        self.plan: list[datetime] = []
+
+    def tick(self, now: datetime) -> bool:
+        """Send a spark if one is due. True if one was sent."""
+        s = self.bot.manager.settings
+        if self.day != now.date():
+            self.day = now.date()
+            self.plan = [t for t in spark.plan_day(now.date(), self.rng, s.sparks_per_day, s.spark_hours)
+                         if t > now]
+        if not self.plan or self.plan[0] > now:
+            return False
+        self.plan = [t for t in self.plan if t > now]  # missed times collapse into this one
+        busy = self.bot.session is not None and self.bot.manager.busy(self.bot.session)
+        if busy or not spark.may_send(self.db, now):
+            return False
+        return self.bot.spark(scheduled=True, now=now)
+
+    def run(self, stop: threading.Event) -> None:
+        while not stop.wait(30):
+            self.bot._safely(lambda: self.tick(datetime.now()))
+
+
 def start(manager: SessionManager, settings: Settings) -> threading.Event | None:
     """Run the bot in the background if a token is configured. Set the returned event to stop it."""
     if not settings.telegram_token:
@@ -312,6 +351,8 @@ def start(manager: SessionManager, settings: Settings) -> threading.Event | None
     bot = TelegramBot(manager, BotApi(settings.telegram_token), settings.telegram_chat_id)
     stop = threading.Event()
     threading.Thread(target=bot.poll, args=(stop,), daemon=True).start()
+    if settings.telegram_chat_id is not None and settings.sparks_per_day[1] > 0:
+        threading.Thread(target=Sparker(bot).run, args=(stop,), daemon=True).start()
     return stop
 
 

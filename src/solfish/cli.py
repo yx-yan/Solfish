@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import getpass
+import random
 import sys
 from datetime import datetime
 from typing import Any
@@ -189,13 +190,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "spark" and args.dry_run:
         db = open_db(settings)
-        db.executescript(spark.SCHEMA)
-        interest = spark.pick(db, datetime.now())
-        if interest is None:
-            print("No interests yet. Tell Solfish what you like talking about.")
+        SessionStore(db)  # the session tables, which choosing a follow-up reads
+        spark.migrate(db)
+        now = datetime.now()
+        card = spark.choose(db, now, random.Random())
+        if card is None:
+            print("Nothing to talk about yet. Tell Solfish what you're into.")
             return 0
-        print(f"{DIM}{spark.seed_message(interest)}{RESET}\n")
-        print(f"🐟 {spark.write_opener(new_client(settings), settings, db, interest)}")
+        print(f"{DIM}{card.seed}{RESET}\n")
+        print(f"🐟 {spark.write_opener(new_client(settings), settings, db, card, now)}")
         return 0
 
     if args.cmd == "serve":
@@ -216,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "spark":
         started = spark.start(store, new_client(settings), settings, "cli")
         if started is None:
-            print("No interests yet. Tell Solfish what you like talking about.")
+            print("Nothing to talk about yet. Tell Solfish what you're into.")
             return 0
         session_id, opener = started
         history = store.load(session_id)
