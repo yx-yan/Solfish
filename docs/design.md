@@ -317,3 +317,37 @@ things worth discussing and learning together.
   wording needs the model.
 - **Not yet:** news, papers and posts as material for sparks (they need real sources, and the
   opener must never invent them), and learning which kinds of spark I answer.
+
+## 18. Web: a search API, and only public addresses
+
+Most useful questions need something newer than the model's training data, or a page the user
+links to: a job post, a company's about page. Reading a page needs no service: `fetch_url` gets
+it, strips it to text with the same parser as the research skill, and serves it in pages of 15k
+characters.
+
+Search does need one. The options I weighed:
+
+- **Scraping a search engine's HTML** (DuckDuckGo's no-JavaScript page) is free and keyless, but
+  it is fragile, against the spirit of the site, and from my machine it already answered with an
+  empty bot check. From a cloud IP it would be worse.
+- **Tavily** has a free tier (1,000 searches a month, no card), is built for agents, and returns
+  a clean snippet per hit. It is the default.
+- **Brave** dropped its free plan for a monthly credit that needs a card.
+- **SearXNG** is free forever and aggregates many engines, at the cost of running one more
+  service. When `SOLFISH_SEARXNG_URL` is set it wins, so moving off Tavily is one line of config.
+
+Two guards:
+
+- **Only public addresses.** The model chooses the URL, and a page it read can suggest one. On
+  the server, `127.0.0.1:8765` is the Solfish web UI and `169.254.169.254` is the cloud metadata
+  service, which hands out credentials. Every host is resolved and must be globally routable,
+  and redirects are followed by hand so each hop is checked before it is requested. (A host
+  that resolves differently between the check and the request could still slip through; the
+  stakes didn't justify pinning the connection to the checked address.)
+- **Pages are data, not instructions.** The skill tells the model to treat anything it reads as
+  information and to report, not follow, instructions it finds. That is a soft guard; the hard
+  ones are elsewhere: every side-effecting tool still needs my approval, and the web UI never
+  renders model output as HTML (section 15). Reading is not gated, since it changes nothing.
+
+Size and type limits keep a single fetch cheap: text types only (no PDFs or images yet), 5 MB
+at most, 20 seconds.

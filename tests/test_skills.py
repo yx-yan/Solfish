@@ -12,7 +12,7 @@ import pytest
 
 from solfish import cli
 from solfish.config import BlogDrafts, Smtp, XAuth
-from solfish.skills import SKILLS, Context, content, forms, open_db, research, resume
+from solfish.skills import SKILLS, Context, content, forms, open_db, research, resume, web
 from solfish.skills.publishers import blog, linkedin, x, xiaohongshu, zhihu
 from solfish.tools import ToolError, ToolRegistry
 
@@ -839,3 +839,118 @@ def test_interests_roundtrip(tools):
     assert tools.execute("mute_interest", {"id": 1}).content == "Muted #1."
     assert "MLX" not in tools.execute("list_interests", {}).content
     assert tools.execute("mute_interest", {"id": 9}).is_error
+
+
+# --- web ------------------------------------------------------------------------------------
+
+PUBLIC_IP = {"example.com": "93.184.215.14", "news.test": "93.184.215.15", "search.test": "93.184.215.16"}
+
+
+@pytest.fixture
+def web_net(monkeypatch):
+    """A fake internet: DNS from PUBLIC_IP plus a few private hosts, and pages from `pages`."""
+    pages: dict[str, httpx2.Response] = {}
+    requests: list[httpx2.Request] = []
+
+    def handler(request):
+        requests.append(request)
+        return pages.get(str(request.url), httpx2.Response(404))
+
+    hosts = {**PUBLIC_IP, "localhost": "127.0.0.1", "router.test": "192.168.1.1",
+             "metadata.google.internal": "169.254.169.254", "v6.test": "::1"}
+    monkeypatch.setattr(web, "resolve", lambda host: [hosts.get(host, "203.0.113.9")])
+    monkeypatch.setattr(web, "transport", httpx2.MockTransport(handler))
+    return pages, requests
+
+
+def web_tools(settings, **config):
+    s = replace(settings, **{"searxng_url": None, "tavily_api_key": None, **config})
+    return ToolRegistry(SKILLS["web"](Context(settings=s, db=open_db(s))).tools)
+
+
+def html(body, title="Acme careers"):
+    return httpx2.Response(200, headers={"content-type": "text/html; charset=utf-8"},
+                           text=f"<html><head><title>{title}</title><script>evil()</script></head>"
+                                f"<body><nav>Menu</nav><h1>AI Engineer</h1><p>{body}</p></body></html>")
+
+
+def test_fetch_url_reads_text_and_pages(settings, web_net):
+    pages, _ = web_net
+    pages["https://example.com/job"] = html("Python and RAG. " * 2000)
+    tools = web_tools(settings)
+    r = tools.execute("fetch_url", {"url": "https://example.com/job"})
+    assert not r.is_error, r.content
+    assert r.content.startswith("[Acme careers | https://example.com/job | page 1/3]")
+    assert "AI Engineer" in r.content and "evil" not in r.content and "Menu" not in r.content
+    assert "page 3/3" in tools.execute("fetch_url", {"url": "https://example.com/job", "page": 3}).content
+    assert tools.execute("fetch_url", {"url": "https://example.com/job", "page": 4}).is_error
+
+
+@pytest.mark.parametrize("url", [
+    "http://localhost:8765/api/sessions", "http://127.0.0.1/", "http://router.test/admin",
+    "http://metadata.google.internal/computeMetadata/v1/", "http://v6.test/", "file:///etc/passwd",
+    "ftp://example.com/x",
+])
+def test_fetch_url_refuses_private_and_non_http(settings, web_net, url):
+    _, requests = web_net
+    r = web_tools(settings).execute("fetch_url", {"url": url})
+    assert r.is_error and not requests
+
+
+def test_fetch_url_checks_every_redirect(settings, web_net):
+    pages, requests = web_net
+    pages["https://example.com/a"] = httpx2.Response(302, headers={"location": "/b"})
+    pages["https://example.com/b"] = httpx2.Response(301, headers={"location": "http://127.0.0.1:8765/"})
+    tools = web_tools(settings)
+    r = tools.execute("fetch_url", {"url": "https://example.com/a"})
+    assert r.is_error and "private or local" in r.content
+    assert [str(q.url) for q in requests] == ["https://example.com/a", "https://example.com/b"]
+
+    pages["https://example.com/c"] = httpx2.Response(302, headers={"location": "https://news.test/story"})
+    pages["https://news.test/story"] = httpx2.Response(200, headers={"content-type": "text/plain"}, text="Hi")
+    assert "| https://news.test/story |" in tools.execute("fetch_url", {"url": "https://example.com/c"}).content
+
+    pages["https://example.com/loop"] = httpx2.Response(302, headers={"location": "/loop"})
+    assert "redirects" in tools.execute("fetch_url", {"url": "https://example.com/loop"}).content
+
+
+def test_fetch_url_refuses_binary_huge_and_errors(settings, web_net):
+    pages, _ = web_net
+    pages["https://example.com/cv.pdf"] = httpx2.Response(200, headers={"content-type": "application/pdf"},
+                                                         content=b"%PDF")
+    pages["https://example.com/huge"] = httpx2.Response(200, headers={"content-type": "text/plain"},
+                                                       content=b"x" * (web.MAX_BYTES + 1))
+    tools = web_tools(settings)
+    assert "application/pdf" in tools.execute("fetch_url", {"url": "https://example.com/cv.pdf"}).content
+    assert "larger than" in tools.execute("fetch_url", {"url": "https://example.com/huge"}).content
+    assert "HTTP 404" in tools.execute("fetch_url", {"url": "https://example.com/missing"}).content
+
+
+def test_web_search_needs_a_provider(settings, web_net):
+    r = web_tools(settings).execute("web_search", {"query": "AI engineer Singapore"})
+    assert r.is_error and "SOLFISH_TAVILY_API_KEY" in r.content
+
+
+def test_web_search_tavily(settings, web_net):
+    pages, requests = web_net
+    pages[web.TAVILY_API] = httpx2.Response(200, json={"results": [
+        {"title": "Acme hiring", "url": "https://example.com/job", "content": "AI  Engineer\nrole"},
+    ]})
+    tools = web_tools(settings, tavily_api_key="tvly-k")
+    r = tools.execute("web_search", {"query": "acme", "max_results": 3})
+    assert r.content == "Acme hiring\nhttps://example.com/job\nAI Engineer role"
+    assert requests[0].headers["authorization"] == "Bearer tvly-k"
+    assert json.loads(requests[0].content) == {"query": "acme", "max_results": 3}
+
+
+def test_web_search_prefers_searxng(settings, web_net):
+    pages, requests = web_net
+    pages["http://127.0.0.1:8888/search?q=acme&format=json"] = httpx2.Response(200, json={"results": [
+        {"title": f"Hit {i}", "url": f"https://example.com/{i}", "content": "x"} for i in range(8)
+    ]})
+    tools = web_tools(settings, searxng_url="http://127.0.0.1:8888/", tavily_api_key="tvly-k")
+    r = tools.execute("web_search", {"query": "acme", "max_results": 2})
+    assert r.content.count("Hit ") == 2 and requests[0].url.host == "127.0.0.1"  # the user's own server
+
+    pages["http://127.0.0.1:8888/search?q=down&format=json"] = httpx2.Response(403, text="json disabled")
+    assert "SearXNG said 403" in tools.execute("web_search", {"query": "down"}).content

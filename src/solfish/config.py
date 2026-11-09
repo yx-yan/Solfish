@@ -104,6 +104,9 @@ class Settings:
     resume_main: str = field(
         default_factory=lambda: os.environ.get("SOLFISH_RESUME_MAIN", "resume-ntu-en.tex")
     )
+    # Web search: a self-hosted SearXNG wins when set, else Tavily (free tier: 1,000 a month).
+    searxng_url: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_SEARXNG_URL"))
+    tavily_api_key: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_TAVILY_API_KEY"))
     smtp: Smtp = field(default_factory=Smtp)
     x: XAuth = field(default_factory=XAuth)
     blog: BlogDrafts = field(default_factory=BlogDrafts)
