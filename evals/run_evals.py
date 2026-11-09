@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from solfish.app import build_agent
-from solfish.config import Settings, load_dotenv
+from solfish.config import Settings, Smtp, load_dotenv
 from solfish.skills import content, forms, jobs, memory, research, spark
 
 HERE = Path(__file__).parent
@@ -50,7 +50,8 @@ def check(c: dict[str, Any], *, db: sqlite3.Connection, reply: str, tools: list[
 
 def run_task(task: dict[str, Any]) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
-        settings = Settings(home=Path(tmp))
+        # Approval is automatic here, so nothing may reach the real résumé repo, GitHub or mail.
+        settings = Settings(home=Path(tmp), resume_dir=None, github_token=None, smtp=Smtp(host=None))
         settings.ensure_dirs()
         db = sqlite3.connect(settings.db_path)
         db.executescript(jobs.SCHEMA + memory.SCHEMA + content.SCHEMA + research.SCHEMA + forms.SCHEMA

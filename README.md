@@ -42,7 +42,7 @@ flowchart LR
     L -->|validate + approve| R[Tool registry]
     R --> S1[core: files, clock]
     R --> S2[memory: remember / recall]
-    R --> S3[jobs + resume: tracker, LaTeX tailoring, email]
+    R --> S3[jobs + resume: tracker, LaTeX tailoring, email, résumé PRs]
     R --> S4[content: drafts, schedule, publishers]
     R --> S5[research: arXiv, paper library]
     R --> S6[forms: profile, browser]
@@ -95,7 +95,9 @@ solfish mark-published 12 https://...      # record a post you published yoursel
 Optional setup per skill (see `.env.example`):
 
 - **resume**: `SOLFISH_RESUME_DIR` points at a LaTeX résumé repo; needs XeLaTeX. Email
-  applications need the `SOLFISH_SMTP_*` settings.
+  applications need the `SOLFISH_SMTP_*` settings. Changes to the master résumé are pushed as a
+  `solfish/<name>` branch with the repo's own git credentials; `SOLFISH_GITHUB_TOKEN` (pull
+  requests on that repo only) lets Solfish open the PR too.
 - **content**: X needs the `SOLFISH_X_*` keys, and each post costs money. LinkedIn needs
   `SOLFISH_LINKEDIN_TOKEN`, renewed every 60 days. The blog needs the `SOLFISH_BLOG_*` settings.
   `solfish handoff` needs the same install as **forms**. Schedule publishing with cron, using the venv's full path; put
@@ -145,6 +147,7 @@ still need the Mac.
 - [x] Skills: core (files, clock), memory, jobs (application tracker)
 - [x] Offline tests and live eval suite
 - [x] resume: tailor my LaTeX résumé to a JD, build the PDF (one-page check), apply by email
+- [x] resume: keep the master résumé current through pull requests I review and merge
 - [x] content: per-platform drafts, scheduling, outbox publisher, `publish-due` for cron
 - [x] research: arXiv search, paged full-text reading, paper library with notes
 - [x] forms: fill web forms from my profile in a visible browser; secrets stay local, clicks through

@@ -137,6 +137,14 @@
     ]
   },
   {
+    "id": "resume/master-change-not-configured",
+    "prompt": "I just finished Quoth, a local hold-to-talk dictation tool. Add it to my résumé.",
+    "checks": [
+      {"tool_called": "read_base_resume"},
+      {"reply_contains_all": ["SOLFISH_RESUME_DIR"]}
+    ]
+  },
+  {
     "id": "forms/save-profile",
     "prompt": "For filling travel forms later: my name is Yan Yuxuan and my nationality is China.",
     "checks": [
