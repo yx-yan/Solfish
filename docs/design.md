@@ -375,3 +375,26 @@ Two guards:
 
 Size and type limits keep a single fetch cheap: text types only (no PDFs or images yet), 5 MB
 at most, 20 seconds.
+
+## 19. Reading: check first, then write the note
+
+I read every day and keep short public notes on my site. Writing them in a web form is the step
+that makes the habit slip, and a note is only worth keeping if what I understood is right. So the
+skill is a workflow more than a pair of tools: tell Solfish what I read, it checks my
+understanding (what is right, what is off, what is missing, and a question or two to test it),
+then drafts the note in my voice and posts it once I approve the text.
+
+- **The model never writes the book's words.** A quote goes in only if I gave it the exact
+  words. A model recalling a quote from memory is the easiest way to publish a fabrication
+  under someone else's name.
+- **The token can add notes and nothing else.** As with blog drafts (section 11), the site
+  holds no service key. A database function checks the token against a stored hash and can
+  only add a note to a book that already exists; it can't edit or delete notes, add books, or
+  touch articles. Unlike a draft, a note is public at once, so Solfish posts through a route on
+  the site that also expires the cached reading pages, and the tool needs my approval with the
+  note shown exactly as it will appear.
+- **A timeout is not a failure.** If the site doesn't answer, the note may be live anyway, so
+  the error says to check the page instead of retrying.
+- **No eval tasks.** The eval runner approves every tool call, so an eval for this skill would
+  post to my real site. The offline tests cover the HTTP side; the check-first behaviour is in
+  the instructions and gets tried by hand.

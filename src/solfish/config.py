@@ -114,6 +114,8 @@ class Settings:
     smtp: Smtp = field(default_factory=Smtp)
     x: XAuth = field(default_factory=XAuth)
     blog: BlogDrafts = field(default_factory=BlogDrafts)
+    # Adds reading notes on the blog's site (SOLFISH_BLOG_SITE); can do nothing else (see reading.py).
+    reading_token: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_READING_TOKEN"))
     linkedin_token: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_LINKEDIN_TOKEN"))
     # LinkedIn retires API versions about a year after release, so this needs a bump now and then.
     linkedin_version: str = field(
