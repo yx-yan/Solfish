@@ -1,6 +1,10 @@
-# 🐟 Solfish
+<p align="center">
+  <img src="assets/logo.svg" width="128" alt="Solfish logo: the brand fish on a tilted jigsaw puzzle piece">
+</p>
 
-**Solve + fish.** A general-purpose personal agent, built from scratch on the Anthropic Messages API, running on DeepSeek by default.
+<h1 align="center">Solfish</h1>
+
+**Salt fish that solves and finishes.** A general-purpose personal agent, built from scratch on the Anthropic Messages API, running on DeepSeek by default.
 
 Solfish is the agent I use day to day. Its core is a hand-written agent loop with no agent
 framework: tool calling, approval gates, long-term memory, tracing and evals are all in this
@@ -8,7 +12,7 @@ repo, small enough to read in one sitting. Capabilities plug in as **skills**: w
 reading, job search and résumé tailoring, social-media publishing, research (arXiv search, reading, a paper library),
 and filling web forms from a personal profile.
 
-> 中文简介：Solfish（solve + fish）是我自己从零写的通用个人 agent。不依赖 agent 框架，
+> 中文简介：Solfish（salt fish 咸鱼，也是 solve and finish）是我自己从零写的通用个人 agent。不依赖 agent 框架，
 > 核心循环、工具调用、记忆、追踪和评测都在这个仓库里。技能包括：联网搜索与读网页、求职与简历定制投递、
 > 自媒体内容排期发布、科研（arXiv 检索、读论文、文献库）。
 
