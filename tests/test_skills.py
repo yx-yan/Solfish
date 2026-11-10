@@ -12,7 +12,7 @@ import pytest
 
 from solfish import cli
 from solfish.config import BlogDrafts, Smtp, XAuth
-from solfish.skills import SKILLS, Context, content, forms, open_db, research, resume, web
+from solfish.skills import SKILLS, Context, content, forms, open_db, reading, research, resume, web
 from solfish.skills.publishers import blog, linkedin, x, xiaohongshu, zhihu
 from solfish.tools import ToolError, ToolRegistry
 
@@ -1047,3 +1047,88 @@ def test_web_search_prefers_searxng(settings, web_net):
 
     pages["http://127.0.0.1:8888/search?q=down&format=json"] = httpx2.Response(403, text="json disabled")
     assert "SearXNG said 403" in tools.execute("web_search", {"query": "down"}).content
+
+
+# ---------- reading ----------
+
+@pytest.fixture
+def reading_net(monkeypatch):
+    """A fake yuxuanyan.com: responses by (method, path), and the requests it got."""
+    routes: dict[tuple[str, str], httpx2.Response] = {}
+    requests: list[httpx2.Request] = []
+
+    def handler(request):
+        requests.append(request)
+        return routes.get((request.method, request.url.path), httpx2.Response(404))
+
+    monkeypatch.setattr(reading, "transport", httpx2.MockTransport(handler))
+    return routes, requests
+
+
+def reading_tools(settings, token="tok"):
+    s = replace(settings, reading_token=token)
+    return ToolRegistry(SKILLS["reading"](Context(settings=s, db=open_db(s))).tools)
+
+
+def test_list_books(settings, reading_net):
+    routes, _ = reading_net
+    routes[("GET", "/api/reading/books")] = httpx2.Response(200, json={"books": [
+        {"slug": "principles", "title": "Principles: Life and Work", "author": "Ray Dalio",
+         "status": "reading", "noteCount": 2},
+        {"slug": "huo-zhe", "title": "活着", "author": "", "status": "finished", "noteCount": 0},
+    ]})
+    r = reading_tools(settings).execute("list_books", {})
+    assert r.content == ("principles: Principles: Life and Work (Ray Dalio) · reading · 2 notes\n"
+                         "huo-zhe: 活着 · finished · 0 notes")
+    routes[("GET", "/api/reading/books")] = httpx2.Response(200, json={"books": []})
+    empty = reading_tools(settings).execute("list_books", {})
+    assert "/admin/reading/books" in empty.content
+
+
+def test_add_reading_note_needs_approval_and_shows_the_note(settings):
+    note = reading_tools(settings).get("add_reading_note")
+    assert note.needs_approval
+    shown = note.approval_args({"book": "principles", "quote": "Pain + Reflection = Progress",
+                                "thoughts": "痛苦本身不是坏事。", "location": "Ch. 1",
+                                "read_on": "2026-11-11"})
+    assert shown["preview"] == ("Public reading note on yuxuanyan.com/reading/principles\n"
+                                "2026-11-11 · principles · Ch. 1\n\n"
+                                "> Pain + Reflection = Progress\n\n痛苦本身不是坏事。")
+
+
+def test_add_reading_note_posts_with_the_token(settings, reading_net):
+    routes, requests = reading_net
+    routes[("POST", "/api/reading/notes")] = httpx2.Response(
+        201, json={"id": "n1", "url": "https://yuxuanyan.com/en/reading/principles#note-n1"})
+    args = {"book": "principles", "thoughts": "Mixed 中英 note"}
+    r = reading_tools(settings).execute("add_reading_note", args)
+    assert r.content == "Posted: https://yuxuanyan.com/en/reading/principles#note-n1"
+    sent = requests[0]
+    assert str(sent.url) == "https://yuxuanyan.com/api/reading/notes"
+    assert sent.headers["authorization"] == "Bearer tok"
+    assert json.loads(sent.content) == {"book": "principles", "readOn": str(reading.today()), "location": "",
+                                        "quote": "", "bodyMd": "Mixed 中英 note"}
+
+
+def test_add_reading_note_failures(settings, reading_net):
+    routes, requests = reading_net
+    args = {"book": "principles", "thoughts": "x"}
+    unset = reading_tools(settings, token=None).execute("add_reading_note", args)
+    assert "SOLFISH_READING_TOKEN" in unset.content
+    empty = reading_tools(settings).execute("add_reading_note", {"book": "principles"})
+    assert "quote or thoughts" in empty.content
+    assert not requests
+    cases = [(401, "refused the reading token"), (404, "No book with the slug"), (400, "said 400")]
+    for status, message in cases:
+        routes[("POST", "/api/reading/notes")] = httpx2.Response(status, json={"error": "x"})
+        r = reading_tools(settings).execute("add_reading_note", args)
+        assert r.is_error and message in r.content
+
+
+def test_add_reading_note_timeout_warns_against_retrying(settings, monkeypatch):
+    def handler(request):
+        raise httpx2.ReadTimeout("slow", request=request)
+
+    monkeypatch.setattr(reading, "transport", httpx2.MockTransport(handler))
+    r = reading_tools(settings).execute("add_reading_note", {"book": "principles", "thoughts": "x"})
+    assert r.is_error and "may be posted anyway" in r.content

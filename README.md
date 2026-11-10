@@ -111,6 +111,8 @@ Optional setup per skill (see `.env.example`):
 - **web**: reading pages needs nothing. Search needs `SOLFISH_TAVILY_API_KEY` (free key at
   [tavily.com](https://tavily.com), 1,000 searches a month) or `SOLFISH_SEARXNG_URL`, a SearXNG
   you host yourself with the JSON format enabled.
+- **reading**: `SOLFISH_READING_TOKEN` (from `npm run reading:token` in the site repo) lets
+  Solfish post the reading notes it helped write; listing the shelf needs nothing.
 - **research**: nothing; arXiv needs no key.
 - **forms**: `pip install -e ".[forms]" && playwright install chromium`. Put sensitive details
   in the profile from the terminal, so they never reach the model:
@@ -163,6 +165,7 @@ still need the Mac.
   multi-step forms, never submits
 - [x] content: X and LinkedIn publishers; blog drafts; 小红书 and 知乎 handoff (fills the page, I
   press publish)
+- [x] reading: check what I learned from a book, then post it as a reading note on my site
 - [ ] content: 公众号 drafts through the official API
 - [ ] research: run experiments in a sandbox (code execution) and log results
 - [ ] jobs: interview prep from a JD + my past notes
