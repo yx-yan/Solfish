@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Solfish (solve + fish) is a general-purpose personal agent written from scratch on the Anthropic
+Solfish (salt fish, also "solve and finish") is a general-purpose personal agent written from scratch on the Anthropic
 Messages API (served by DeepSeek by default), with no agent framework. It is both a tool I use daily and a public portfolio piece
 showing I understand how agents work, so code clarity and the docs matter as much as features.
 
