@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from dataclasses import replace
 from datetime import datetime
 from itertools import cycle
@@ -226,6 +228,97 @@ def test_propose_opens_a_pull_request(resume_tools, monkeypatch):
 def test_github_repo_from_remote(url):
     assert resume.github_repo(url) == "yx-yan/resume"
     assert resume.github_repo("/tmp/origin.git") is None
+
+
+def make_project(root: Path, name: str, commits: list[tuple[str, str, str]]) -> Path:
+    """A git repo with an origin; commits are (author email, message, ISO date)."""
+    origin, repo = root / f"{name}.git", root / "projects" / name
+    resume.git(root, "init", "--quiet", "--bare", "-b", "main", str(origin))
+    repo.mkdir(parents=True)
+    resume.git(repo, "init", "--quiet", "-b", "main")
+    for args in (("config", "user.name", "Me"), ("config", "user.email", "me@test"),
+                 ("remote", "add", "origin", str(origin))):
+        resume.git(repo, *args)
+    (repo / "README.md").write_text(f"# {name}\n\nWhat {name} does.\n", encoding="utf-8")
+    for i, (email, msg, when) in enumerate(commits):
+        (repo / f"f{i}").write_text(msg, encoding="utf-8")
+        resume.git(repo, "add", ".")
+        # --since filters on the committer date, so both dates are set
+        subprocess.run(["git", "-c", f"user.email={email}", "-c", f"user.name={email.split('@')[0]}",
+                        "commit", "--quiet", "-m", msg, f"--date={when}"],
+                       cwd=repo, check=True, env={**os.environ, "GIT_COMMITTER_DATE": when})
+    resume.git(repo, "push", "--quiet", "origin", "main")
+    return repo
+
+
+def test_recent_project_activity(settings, tmp_path):
+    now, old = datetime.now().isoformat(timespec="seconds"), "2020-01-01T00:00:00"
+    make_project(tmp_path, "trawl", [("me@test", "Old work", old),
+                                     ("me@test", "Ship M1\n\nJudges jobs by description.", now),
+                                     ("other@test", "Someone else's fix", now)])
+    make_project(tmp_path, "quiet", [("me@test", "Ancient", old)])
+    s = replace(settings, projects_dir=tmp_path / "projects")
+    activity = ToolRegistry(SKILLS["resume"](Context(settings=s, db=open_db(s))).tools)
+    r = activity.execute("recent_project_activity", {"days": 7})
+    assert not r.is_error
+    assert "1 of 2 projects" in r.content
+    assert "Ship M1" in r.content and "Judges jobs by description." in r.content
+    assert "What trawl does." in r.content
+    assert "Old work" not in r.content and "Someone else" not in r.content and "quiet" not in r.content
+
+
+def test_recent_project_activity_counts_clones_once_and_shares_the_space(settings, tmp_path, monkeypatch):
+    now = datetime.now().isoformat(timespec="seconds")
+    trawl = make_project(tmp_path, "trawl", [("me@test", "Ship M1", now)])
+    clone = tmp_path / "projects" / "trawl-copy"
+    resume.git(tmp_path, "clone", "--quiet", str(trawl), str(clone))
+    for key, value in (("user.name", "Me"), ("user.email", "me@test")):
+        resume.git(clone, "config", key, value)
+    resume.git(clone, "remote", "set-url", "origin", resume.git(trawl, "remote", "get-url", "origin"))
+    make_project(tmp_path, "big", [("me@test", "x" * 300 + f" {i}", now) for i in range(40)])
+    monkeypatch.setattr(resume, "ACTIVITY_LIMIT", 3000)
+    monkeypatch.setattr(resume, "github_repo", lambda url: url.rsplit("/", 1)[-1])
+    s = replace(settings, projects_dir=tmp_path / "projects")
+    registry = ToolRegistry(SKILLS["resume"](Context(settings=s, db=open_db(s))).tools)
+    out = registry.execute("recent_project_activity", {}).content
+    assert "2 of 3 projects" in out  # trawl and its copy are one repo
+    assert "Ship M1" in out and "[cut]" in out  # the big project didn't crowd trawl out
+
+
+def test_recent_project_activity_skips_the_resume_repo(resume_tools, tmp_path):
+    _, s, _ = resume_tools
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    (projects / "resume").symlink_to(s.resume_dir)
+    s = replace(s, projects_dir=projects)
+    registry = ToolRegistry(SKILLS["resume"](Context(settings=s, db=open_db(s))).tools)
+    assert "across 0 projects" in registry.execute("recent_project_activity", {}).content
+
+
+def test_recent_project_activity_needs_config(tools):
+    r = tools.execute("recent_project_activity", {})
+    assert r.is_error and "SOLFISH_PROJECTS_DIR" in r.content
+
+
+def test_resume_review_runs_unattended_and_reports(settings, monkeypatch):
+    from conftest import FakeClient, message, text, tool_use
+
+    from solfish import app
+    from solfish.session import SessionStore
+
+    client = FakeClient(
+        message(tool_use("send_application", {"application_id": 1, "to": "a@b.c", "subject": "s",
+                                              "body": "b"}), stop="tool_use"),  # needs approval
+        message(text("没有值得更新的内容。")),
+    )
+    monkeypatch.setattr(app, "new_client", lambda s: client)
+    sent = []
+    monkeypatch.setattr(cli.telegram, "notify", lambda s, t: sent.append(t))
+    assert cli.resume_review(settings, SessionStore(open_db(settings)), 14, send=True) == 0
+    assert "days=14" in client.requests[0]["messages"][0]["content"]
+    denied = client.requests[1]["messages"][-1]["content"][0]
+    assert denied["type"] == "tool_result" and denied.get("is_error")
+    assert sent == ["简历周检\n\n没有值得更新的内容。"]
 
 
 # --- content --------------------------------------------------------------------------------

@@ -23,6 +23,7 @@ import shutil
 import smtplib
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from datetime import date
 from email.message import EmailMessage
 from pathlib import Path
@@ -69,6 +70,10 @@ class ProposeArgs(BaseModel):
         description="Pull request description: what changed and why, and any fact the user should check."
     )
     changes: list[FileChange] = Field(min_length=1)
+
+
+class ActivityArgs(BaseModel):
+    days: int = Field(default=7, ge=1, le=365, description="How many days back to look.")
 
 
 class BuildArgs(BaseModel):
@@ -136,6 +141,67 @@ def git(repo: Path, *args: str) -> str:
     return r.stdout.strip()
 
 
+ACTIVITY_LIMIT = 16_000  # characters in all, shared evenly so every active project shows up
+BODY_LIMIT = 400  # per commit message body
+README_LINES = 25
+
+
+@dataclass
+class Activity:
+    remote: str  # 'owner/name', or the folder name; several clones of one repo share it
+    latest: str  # date of the newest commit, YYYY-MM-DD
+    text: str
+
+
+def default_ref(repo: Path) -> str:
+    """origin's default branch (origin/HEAD), else origin/main or origin/master, else HEAD."""
+    for args in (("rev-parse", "--abbrev-ref", "origin/HEAD"),
+                 ("rev-parse", "--verify", "--quiet", "--abbrev-ref", "origin/main"),
+                 ("rev-parse", "--verify", "--quiet", "--abbrev-ref", "origin/master")):
+        try:
+            if ref := git(repo, *args):
+                return ref
+        except ToolError:
+            continue
+    return "HEAD"
+
+
+def repo_activity(repo: Path, days: int) -> Activity | None:
+    """The user's commits that reached the default branch in the last `days` days, newest first:
+    merge commits carry pull request titles, the merged commits their full messages. Plus the top
+    of the README; None if there are no commits."""
+    try:
+        git(repo, "fetch", "--quiet", "origin")
+        stale = ""
+    except ToolError:
+        stale = " (couldn't fetch; local history only)"
+    try:
+        # Several --author flags match any of them: the local email, and the name, which also
+        # catches merges made on GitHub (authored with a noreply address)
+        authors = [f"--author={git(repo, 'config', key)}" for key in ("user.email", "user.name")]
+        log = git(repo, "log", default_ref(repo), f"--since={days}.days",
+                  *authors, "--date=short", "--format=%x1e%ad %s%n%b")
+    except ToolError:
+        return None
+    commits = []
+    for record in filter(None, (r.strip() for r in log.split("\x1e"))):
+        head, _, body = record.partition("\n")
+        body = " ".join(body.split())
+        commits.append(f"- {head}" + (f"\n  {body[:BODY_LIMIT]}" if body else ""))
+    if not commits:
+        return None
+    try:
+        remote = github_repo(git(repo, "remote", "get-url", "origin")) or repo.name
+    except ToolError:
+        remote = repo.name
+    out = [f"## {repo.name} ({remote}){stale}", f"{len(commits)} commit(s):", *commits]
+    readme = repo / "README.md"
+    if readme.is_file():
+        top = readme.read_text(encoding="utf-8", errors="replace").splitlines()[:README_LINES]
+        out += ["README (top):", *top]
+    return Activity(remote=remote, latest=commits[0][2:12], text="\n".join(out))
+
+
 def tracked_tex(repo: Path) -> set[str]:
     """Top-level .tex files under version control; ignored local drafts are left out."""
     try:
@@ -190,6 +256,28 @@ def load(ctx: Context) -> Skill:
         if name not in allowed:
             raise ToolError(f"{name!r} isn't a tracked .tex file; choose from {', '.join(sorted(allowed))}.")
         return (repo / name).read_text(encoding="utf-8")
+
+    @tool(ActivityArgs)
+    def recent_project_activity(args: ActivityArgs) -> str:
+        """What the user shipped recently: their commits and merged pull requests on the main
+        branch of each project in SOLFISH_PROJECTS_DIR, with each active project's README.
+        Read-only. Use it to keep the résumé current."""
+        root = settings.projects_dir
+        if root is None or not root.is_dir():
+            raise ToolError("Set SOLFISH_PROJECTS_DIR to the folder that holds the project clones.")
+        resume_dir = settings.resume_dir.resolve() if settings.resume_dir else None
+        repos = sorted(d for d in root.iterdir() if (d / ".git").exists() and d.resolve() != resume_dir)
+        by_remote: dict[str, Activity] = {}
+        for a in filter(None, (repo_activity(d, args.days) for d in repos)):
+            if a.remote not in by_remote or len(a.text) > len(by_remote[a.remote].text):
+                by_remote[a.remote] = a  # extra clones of one repo count once
+        if not by_remote:
+            return f"No commits by the user in the last {args.days} days across {len(repos)} projects."
+        found = sorted(by_remote.values(), key=lambda a: a.latest, reverse=True)
+        share = ACTIVITY_LIMIT // len(found)
+        text = "\n\n".join(a.text if len(a.text) <= share else a.text[:share] + "\n[cut]" for a in found)
+        return (f"Activity in the last {args.days} days ({len(found)} of {len(repos)} projects, "
+                f"most recent first):\n\n{text}")
 
     @tool(BuildArgs, needs_approval=True)
     def build_resume(args: BuildArgs) -> str:
@@ -343,5 +431,6 @@ def load(ctx: Context) -> Skill:
             "proposal, with the same facts, numbers and dates in the same order. To revise a "
             "proposal after the user's feedback, propose again under the same name."
         ),
-        tools=[read_base_resume, build_resume, send_application, propose_resume_change],
+        tools=[read_base_resume, build_resume, send_application, propose_resume_change,
+               recent_project_activity],
     )

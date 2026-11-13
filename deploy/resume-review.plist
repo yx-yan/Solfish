@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Weekly résumé review on the Mac (deploy/install-resume-review.sh fills in REPO and HOME).
+     It runs here, not on the server: the résumé repo, its photo, XeLaTeX and the project clones
+     are all on this machine. A run missed while the Mac sleeps happens when it wakes. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.solfish.resume-review</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>REPO/.venv/bin/solfish</string>
+        <string>resume-review</string>
+        <string>--send</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>REPO</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Library/TeX/texbin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>20</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>HOME/.solfish/logs/resume-review.log</string>
+    <key>StandardErrorPath</key>
+    <string>HOME/.solfish/logs/resume-review.log</string>
+</dict>
+</plist>
