@@ -102,6 +102,9 @@ class Settings:
     # The LaTeX résumé repo the resume skill tailors from. Never written in place: builds happen
     # in a copy, and changes to the master go up as a pull request from a temporary worktree.
     resume_dir: Path | None = field(default_factory=lambda: _optional_path("SOLFISH_RESUME_DIR"))
+    # The folder holding the user's project clones; recent_project_activity reads their history
+    # to keep the résumé current (`solfish resume-review`).
+    projects_dir: Path | None = field(default_factory=lambda: _optional_path("SOLFISH_PROJECTS_DIR"))
     resume_main: str = field(
         default_factory=lambda: os.environ.get("SOLFISH_RESUME_MAIN", "resume-en.tex")
     )

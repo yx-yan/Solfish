@@ -398,3 +398,33 @@ then drafts the note in my voice and posts it once I approve the text.
 - **No eval tasks.** The eval runner approves every tool call, so an eval for this skill would
   post to my real site. The offline tests cover the HTTP side; the check-first behaviour is in
   the instructions and gets tried by hand.
+
+## 20. Résumé review: the projects write the résumé
+
+A résumé goes stale in the weeks I'm busiest building. `solfish resume-review` (every Sunday,
+from launchd) reads what I shipped and proposes the update as a pull request, the same way as
+any other résumé change (section 10).
+
+- **Git history is the source.** `recent_project_activity` fetches each clone in
+  `SOLFISH_PROJECTS_DIR` and reads my commits that reached its default branch in the window:
+  merge commits carry pull request titles, the merged commits their full messages, and each
+  active project adds the top of its README. Commits are matched on my email or my name, since a
+  merge made on GitHub is authored with a noreply address. No GitHub token, no API: what was
+  merged is in the clone.
+- **Every active project gets a fair share.** The first run read about 70,000 characters of
+  activity and a flat cut kept only the first two projects alphabetically, which dropped the one
+  that mattered most. Now clones of the same repo count once, projects come most recent first,
+  and the space is split evenly.
+- **Unattended, but only one side effect.** The run refuses every tool that asks for approval,
+  except test builds of the résumé, which only write to the local workspace. What's left that
+  changes anything is `propose_resume_change`, and that needs no approval because merging is the
+  approval. A fixed proposal name means unreviewed weeks pile up in one pull request instead of
+  one per week.
+- **No invented numbers.** The instructions allow only facts from the activity or the résumé;
+  where a number would help, the line goes in without it and a `% TODO(确认)` comment says what to
+  confirm. The first real run did exactly that, and asked before dropping a section to fit one page.
+- **It runs on the Mac, not the server.** The résumé repo (with the photo the Chinese version
+  embeds), XeLaTeX and the project clones are all here; putting them on the server would mean a
+  token that can write a private repo. launchd runs a missed week when the Mac wakes.
+- **No eval tasks.** An eval run would push to the real résumé repo. The offline tests build real
+  git repos with dated commits; the judgement (what is worth a line) gets read in the pull request.
