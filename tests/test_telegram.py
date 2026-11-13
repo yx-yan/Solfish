@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 import httpx2
+import pytest
 from conftest import FakeClient, message, text, tool_use
 
 from solfish.channels.telegram import BotApi, Sparker, TelegramBot, split_message
@@ -226,3 +227,71 @@ def test_split_message():
     parts = split_message("line\n" * 2000, limit=4000)
     assert all(len(p) <= 4000 for p in parts) and "".join(p + "\n" for p in parts).count("line") == 2000
     assert split_message("x" * 9000) == ["x" * 4000, "x" * 4000, "x" * 1000]
+
+
+def test_review_runs_test_builds_without_asking_and_you_reply_in_it(settings):
+    manager, bot, tg = make(
+        settings,
+        message(tool_use("build_resume", {"name": "x", "tex": "y"}), stop="tool_use"),
+        message(text("Proposed: add trawl.")),
+        message(text("Kept the dissertation.")),
+    )
+    bot.handle(say("/review"))
+    sid = bot.session
+    wait_idle(manager, sid)
+    assert "Résumé review" in tg.sent()[0]["text"]
+    assert not [m for m in tg.sent() if "reply_markup" in m]  # no approval buttons
+    first = manager.client.requests[0]["messages"][0]["content"]
+    assert "Weekly résumé review" in first and "days=7" in first
+    result = manager.client.requests[1]["messages"][-1]["content"][0]
+    assert result["type"] == "tool_result" and "declined" not in json.dumps(result)
+
+    bot.handle(say("keep the dissertation section"))
+    wait_idle(manager, sid)
+    assert bot.session == sid and len(manager.client.requests[-1]["messages"]) == 5
+
+
+def test_preapproval_stays_with_its_session(settings):
+    manager, *_ = make(settings)
+    review = manager.create("telegram", preapproved=frozenset({"build_resume"}))
+    other = manager.create("telegram")
+    approve_review = manager._agent(review)[0].approve
+    assert approve_review("build_resume", {})
+    assert manager._preapproved.get(other) is None
+
+
+def test_reviewer_runs_weekly_and_catches_up(settings):
+    from solfish.channels.telegram import Reviewer
+
+    manager, bot, tg = make(settings, *(message(text(f"r{i}")) for i in range(3)))
+    started = []
+    bot.review = lambda days=7: started.append(days) or "s"
+    reviewer = Reviewer(bot, (6, 20, 0))  # Sundays 20:00
+    sat = datetime(2026, 11, 14, 12, 0)
+    assert reviewer.slot(sat) == datetime(2026, 11, 8, 20, 0)
+    assert not reviewer.tick(sat)  # first start: wait for the next Sunday
+    assert not reviewer.tick(datetime(2026, 11, 15, 19, 59))
+    assert reviewer.tick(datetime(2026, 11, 15, 20, 0)) and started == [7]
+    assert not reviewer.tick(datetime(2026, 11, 15, 20, 1))  # once per slot
+    # The server was down for two Sundays: one review, looking back over the gap
+    assert reviewer.tick(datetime(2026, 11, 30, 9, 0)) and started == [7, 15]
+    # Mid-conversation it waits
+    bot.session = manager.create("telegram")
+    manager._running[bot.session] = threading.current_thread()
+    assert not reviewer.tick(datetime(2026, 12, 6, 20, 0))
+    del manager._running[bot.session]
+    assert reviewer.tick(datetime(2026, 12, 6, 20, 5)) and started[-1] == 7
+
+
+def test_review_at_setting(monkeypatch):
+    from solfish.config import _weekly
+
+    monkeypatch.setenv("SOLFISH_REVIEW_AT", "Sun 20:00")
+    assert _weekly("SOLFISH_REVIEW_AT") == (6, 20, 0)
+    monkeypatch.setenv("SOLFISH_REVIEW_AT", "monday 9")
+    assert _weekly("SOLFISH_REVIEW_AT") == (0, 9, 0)
+    monkeypatch.setenv("SOLFISH_REVIEW_AT", "")
+    assert _weekly("SOLFISH_REVIEW_AT") is None
+    monkeypatch.setenv("SOLFISH_REVIEW_AT", "someday")
+    with pytest.raises(ValueError):
+        _weekly("SOLFISH_REVIEW_AT")
