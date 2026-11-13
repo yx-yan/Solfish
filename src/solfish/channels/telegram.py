@@ -13,19 +13,20 @@ can be approved from the phone.
 from __future__ import annotations
 
 import json
+import math
 import queue
 import random
 import sys
 import threading
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx2
 
 from ..config import Settings
 from ..session import Busy, SessionManager
-from ..skills import open_db, spark
+from ..skills import open_db, resume, spark
 
 LIMIT = 4000  # Telegram's cap is 4096 UTF-16 units; this leaves room for emoji
 MAX_PREVIEW = 3500  # of a post awaiting approval; leaves room for the rest of the message
@@ -37,7 +38,8 @@ Send a message to talk to Solfish.
 /cost tokens and cost of this session
 /files send a recent workspace file
 /spark let Solfish pick something to talk about
-/interests what it knows you like talking about"""
+/interests what it knows you like talking about
+/review update the résumé from what you shipped this week"""
 
 
 class TelegramError(Exception):
@@ -215,6 +217,11 @@ class TelegramBot:
             self._later(self.spark)  # one model call; off the polling thread
         elif cmd == "/interests":
             self.send(spark.describe(self.manager.store.db))
+        elif cmd == "/review":
+            if self.session and self.manager.busy(self.session):
+                self.send("Still working on the last message. /stop to interrupt it.")
+            else:
+                self.review()
         else:
             self.send(HELP)
 
@@ -237,6 +244,15 @@ class TelegramBot:
         self.session, opener = started
         self.send(opener)
         return True
+
+    def review(self, days: int = 7) -> str:
+        """Start a résumé review as a new session and make it the current one, so a reply asks
+        for changes to the same pull request."""
+        session = self.manager.create("telegram", preapproved=resume.REVIEW_PREAPPROVED)
+        self.session = session
+        self.send(f"📝 Résumé review: reading the last {days} days of project activity…")
+        self.manager.send(session, resume.REVIEW_PROMPT.format(days=days))
+        return session
 
     def _message(self, text: str) -> None:
         if self.session is None:
@@ -344,6 +360,52 @@ class Sparker:
             self.bot._safely(lambda: self.tick(datetime.now()))
 
 
+class Reviewer:
+    """Starts the weekly résumé review at `settings.review_at`. The last run is stored, so a review
+    missed while the server was down runs once it's back, looking back over the whole gap."""
+
+    MAX_DAYS = 60
+
+    def __init__(self, bot: TelegramBot, at: tuple[int, int, int]) -> None:
+        self.bot, self.at = bot, at
+        self.db = open_db(bot.manager.settings)
+        self.db.execute("CREATE TABLE IF NOT EXISTS schedule (name TEXT PRIMARY KEY, last_run TEXT NOT NULL)")
+        self.db.commit()
+
+    def slot(self, now: datetime) -> datetime:
+        """The most recent scheduled time at or before `now`."""
+        weekday, hour, minute = self.at
+        t = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        t -= timedelta(days=(now.weekday() - weekday) % 7)
+        return t if t <= now else t - timedelta(days=7)
+
+    def _set(self, when: datetime) -> None:
+        self.db.execute("INSERT INTO schedule (name, last_run) VALUES ('resume_review', ?) "
+                        "ON CONFLICT (name) DO UPDATE SET last_run = excluded.last_run", (when.isoformat(),))
+        self.db.commit()
+
+    def tick(self, now: datetime) -> bool:
+        """Start a review if one is due. True if one was started."""
+        slot = self.slot(now)
+        row = self.db.execute("SELECT last_run FROM schedule WHERE name = 'resume_review'").fetchone()
+        if row is None:  # first start: the next slot is the first review, not one right away
+            self._set(slot)
+            return False
+        last = datetime.fromisoformat(row[0])
+        if last >= slot:
+            return False
+        if self.bot.session is not None and self.bot.manager.busy(self.bot.session):
+            return False  # mid-conversation: try again on the next tick
+        self._set(now)
+        days = min(max(7, math.ceil((now - last) / timedelta(days=1))), self.MAX_DAYS)
+        self.bot.review(days)
+        return True
+
+    def run(self, stop: threading.Event) -> None:
+        while not stop.wait(60):
+            self.bot._safely(lambda: self.tick(datetime.now()))
+
+
 def start(manager: SessionManager, settings: Settings) -> threading.Event | None:
     """Run the bot in the background if a token is configured. Set the returned event to stop it."""
     if not settings.telegram_token:
@@ -353,6 +415,8 @@ def start(manager: SessionManager, settings: Settings) -> threading.Event | None
     threading.Thread(target=bot.poll, args=(stop,), daemon=True).start()
     if settings.telegram_chat_id is not None and settings.sparks_per_day[1] > 0:
         threading.Thread(target=Sparker(bot).run, args=(stop,), daemon=True).start()
+    if settings.telegram_chat_id is not None and settings.review_at is not None:
+        threading.Thread(target=Reviewer(bot, settings.review_at).run, args=(stop,), daemon=True).start()
     return stop
 
 

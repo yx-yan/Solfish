@@ -188,6 +188,9 @@ class SessionManager:
         self.store = SessionStore(open_db(settings))
         self.approvals = Approvals(approval_timeout_s)
         self._agents: dict[str, tuple[Agent, Tracer]] = {}
+        # Tools a session may run without asking, e.g. test builds in a résumé review. In memory
+        # only: after a restart those tools ask again, which errs on the safe side.
+        self._preapproved: dict[str, frozenset[str]] = {}
         self._running: dict[str, threading.Thread] = {}
         self._subscribers: list[Subscriber] = []
         self._lock = threading.Lock()
@@ -201,9 +204,11 @@ class SessionManager:
         for fn in list(self._subscribers):
             fn(session_id, kind, data)
 
-    def create(self, channel: str) -> str:
+    def create(self, channel: str, preapproved: frozenset[str] = frozenset()) -> str:
         session_id = new_session_id()
         self.store.create(session_id, channel)
+        if preapproved:
+            self._preapproved[session_id] = preapproved
         return session_id
 
     def model_client(self) -> anthropic.Anthropic:
@@ -226,7 +231,8 @@ class SessionManager:
                 skills=self.skills,
                 session_id=session_id,
                 messages=self.store.load(session_id),
-                approve=lambda name, args: self.approvals.request(session_id, name, args, notify),
+                approve=lambda name, args: (name in self._preapproved.get(session_id, ())
+                                            or self.approvals.request(session_id, name, args, notify)),
                 listeners=[lambda kind, data: self._broadcast(session_id, kind, data)],
                 trace=self.trace,
             )

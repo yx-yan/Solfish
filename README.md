@@ -103,8 +103,8 @@ Optional setup per skill (see `.env.example`):
   applications need the `SOLFISH_SMTP_*` settings. Changes to the master résumé are pushed as a
   `solfish/<name>` branch with the repo's own git credentials; `SOLFISH_GITHUB_TOKEN` (pull
   requests on that repo only) lets Solfish open the PR too. With `SOLFISH_PROJECTS_DIR` set,
-  `solfish resume-review` reads what you shipped across your projects and proposes résumé updates;
-  `deploy/install-resume-review.sh` runs it every Sunday on a Mac.
+  `/review` in Telegram (or `solfish resume-review`) reads what you shipped across your projects
+  and proposes résumé updates; `SOLFISH_REVIEW_AT="sun 20:00"` has the server start it weekly.
 - **content**: X needs the `SOLFISH_X_*` keys, and each post costs money. LinkedIn needs
   `SOLFISH_LINKEDIN_TOKEN`, renewed every 60 days. The blog needs the `SOLFISH_BLOG_*` settings.
   `solfish handoff` needs the same install as **forms**. Schedule publishing with cron, using the venv's full path; put

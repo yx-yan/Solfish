@@ -141,6 +141,31 @@ def git(repo: Path, *args: str) -> str:
     return r.stdout.strip()
 
 
+# The weekly review: `/review` in Telegram, weekly from the server (SOLFISH_REVIEW_AT), or
+# `solfish resume-review`. The instructions go in the user turn, not the system prompt, so the
+# cached prefix stays the same as in any other session.
+REVIEW_PROMPT = """Weekly résumé review. Keep my résumé current with what I've actually shipped.
+
+1. Call recent_project_activity with days={days}.
+2. Read the résumé with read_base_resume (resume-en.tex), and resume-zh.tex as well.
+3. Decide whether anything is worth changing: a new project, a milestone shipped, a result with
+   a number. Skip routine work (refactors, small fixes, docs) and anything already on the résumé.
+4. If it is, call propose_resume_change with name "weekly-project-update" (an open proposal with
+   that name gets the new commit, so unreviewed weeks pile up in one pull request). Change
+   resume-en.tex and resume-zh.tex together, same facts in the same order.
+   - Use only facts from the activity or already on the résumé. Never invent numbers, users or
+     outcomes. Where a number would help but isn't stated, write the line without it and add a
+     LaTeX comment above it: % TODO(确认): <what to confirm>.
+   - Keep one page: tighten or drop weaker lines to make room. If it doesn't fit, cut and propose
+     again.
+5. Reply in Chinese, in a few lines: what you proposed and why, with the pull request link; or
+   that nothing was worth changing and what you looked at. If the tools failed, say which. I may
+   answer with changes; revise by proposing again under the same name."""
+
+# What a review may do without asking: test builds land in the local workspace and change nothing
+# anyone sees. propose_resume_change needs no approval anyway, since merging is the approval.
+REVIEW_PREAPPROVED = frozenset({"build_resume"})
+
 ACTIVITY_LIMIT = 16_000  # characters in all, shared evenly so every active project shows up
 BODY_LIMIT = 400  # per commit message body
 README_LINES = 25

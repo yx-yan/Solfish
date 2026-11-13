@@ -401,30 +401,36 @@ then drafts the note in my voice and posts it once I approve the text.
 
 ## 20. Résumé review: the projects write the résumé
 
-A résumé goes stale in the weeks I'm busiest building. `solfish resume-review` (every Sunday,
-from launchd) reads what I shipped and proposes the update as a pull request, the same way as
-any other résumé change (section 10).
+A résumé goes stale in the weeks I'm busiest building. Every Sunday evening Solfish reads what I
+shipped and proposes the update as a pull request, the same way as any other résumé change
+(section 10). It's a Telegram conversation: if I want a line kept or reworded, I reply, and the
+same pull request gets the revision.
 
 - **Git history is the source.** `recent_project_activity` fetches each clone in
   `SOLFISH_PROJECTS_DIR` and reads my commits that reached its default branch in the window:
   merge commits carry pull request titles, the merged commits their full messages, and each
   active project adds the top of its README. Commits are matched on my email or my name, since a
-  merge made on GitHub is authored with a noreply address. No GitHub token, no API: what was
-  merged is in the clone.
+  merge made on GitHub is authored with a noreply address.
 - **Every active project gets a fair share.** The first run read about 70,000 characters of
   activity and a flat cut kept only the first two projects alphabetically, which dropped the one
   that mattered most. Now clones of the same repo count once, projects come most recent first,
   and the space is split evenly.
-- **Unattended, but only one side effect.** The run refuses every tool that asks for approval,
-  except test builds of the résumé, which only write to the local workspace. What's left that
-  changes anything is `propose_resume_change`, and that needs no approval because merging is the
-  approval. A fixed proposal name means unreviewed weeks pile up in one pull request instead of
-  one per week.
+- **It runs inside the server, not on a schedule of its own.** The bot that already runs all day
+  starts the review (`SOLFISH_REVIEW_AT`, e.g. "sun 20:00"), the way it starts sparks, so there is
+  no extra process and nothing to miss when my laptop is off. The last run is stored: after
+  downtime the review runs once, looking back over the whole gap. `/review` starts one by hand;
+  `solfish resume-review` runs one unattended from a shell.
+- **Only test builds skip approval.** A review session pre-approves `build_resume`, which only
+  writes to the local workspace, so a page-count check doesn't wait on a button press at 8 pm.
+  Everything else still asks. `propose_resume_change` needs no approval because merging is the
+  approval, and a fixed name means unreviewed weeks pile up in one pull request.
 - **No invented numbers.** The instructions allow only facts from the activity or the résumé;
   where a number would help, the line goes in without it and a `% TODO(确认)` comment says what to
   confirm. The first real run did exactly that, and asked before dropping a section to fit one page.
-- **It runs on the Mac, not the server.** The résumé repo (with the photo the Chinese version
-  embeds), XeLaTeX and the project clones are all here; putting them on the server would mean a
-  token that can write a private repo. launchd runs a missed week when the Mac wakes.
+- **Least access on the server.** Each private repo it reads has its own read-only deploy key; the
+  résumé repo's key is the only one that can push. The Chinese résumé embeds a photo that stays
+  off the server: a blank image of the same size stands in, which gives the same layout and page
+  count, and the Chinese PDF is never committed.
 - **No eval tasks.** An eval run would push to the real résumé repo. The offline tests build real
-  git repos with dated commits; the judgement (what is worth a line) gets read in the pull request.
+  git repos with dated commits and drive the bot and its schedule; the judgement (what is worth a
+  line) gets read in the pull request.

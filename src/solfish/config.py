@@ -30,6 +30,21 @@ def home_dir() -> Path:
     return Path(os.environ.get("SOLFISH_HOME", "~/.solfish")).expanduser()
 
 
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _weekly(var: str) -> tuple[int, int, int] | None:
+    """"sun 20:00" -> (6, 20, 0), weekday as in datetime.weekday(); unset or empty -> None."""
+    value = os.environ.get(var, "").strip().lower()
+    if not value:
+        return None
+    day, _, clock = value.partition(" ")
+    hour, _, minute = clock.partition(":")
+    if day[:3] not in WEEKDAYS or not hour.isdigit():
+        raise ValueError(f'{var} must look like "sun 20:00", not {value!r}')
+    return WEEKDAYS.index(day[:3]), int(hour), int(minute or 0)
+
+
 def _range(var: str, default: str) -> tuple[int, int]:
     """"5-8" -> (5, 8); a single number "0" -> (0, 0)."""
     low, _, high = os.environ.get(var, default).partition("-")
@@ -134,6 +149,8 @@ class Settings:
     # fall in (start inclusive, end exclusive). "0" turns them off.
     sparks_per_day: tuple[int, int] = field(default_factory=lambda: _range("SOLFISH_SPARKS_PER_DAY", "5-8"))
     spark_hours: tuple[int, int] = field(default_factory=lambda: _range("SOLFISH_SPARK_HOURS", "9-23"))
+    # When the server starts the weekly résumé review in Telegram, e.g. "sun 20:00"; unset: never.
+    review_at: tuple[int, int, int] | None = field(default_factory=lambda: _weekly("SOLFISH_REVIEW_AT"))
 
     @property
     def db_path(self) -> Path:

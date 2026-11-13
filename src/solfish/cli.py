@@ -17,7 +17,7 @@ from .app import DEFAULT_SKILLS, build_agent, new_client, new_session_id
 from .channels import telegram
 from .config import Settings, home_dir, load_dotenv
 from .session import SessionStore
-from .skills import content, forms, open_db, spark
+from .skills import content, forms, open_db, resume, spark
 from .tools import ToolError
 from .trace import Tracer
 
@@ -102,40 +102,16 @@ def summary(tracer: Tracer) -> str:
     return line
 
 
-# The weekly résumé review (`solfish resume-review`, run by launchd). The instructions sit in the
-# user turn, not the system prompt, so the cached prefix stays the same as in any other session.
-REVIEW_PROMPT = """Weekly résumé review. Keep my résumé current with what I've actually shipped.
-
-1. Call recent_project_activity with days={days}.
-2. Read the résumé with read_base_resume (resume-en.tex), and resume-zh.tex as well.
-3. Decide whether anything is worth changing: a new project, a milestone shipped, a result with
-   a number. Skip routine work (refactors, small fixes, docs) and anything already on the résumé.
-4. If it is, call propose_resume_change with name "weekly-project-update" (an open proposal with
-   that name gets the new commit, so unreviewed weeks pile up in one pull request). Change
-   resume-en.tex and resume-zh.tex together, same facts in the same order.
-   - Use only facts from the activity or already on the résumé. Never invent numbers, users or
-     outcomes. Where a number would help but isn't stated, write the line without it and add a
-     LaTeX comment above it: % TODO(确认): <what to confirm>.
-   - Keep one page: tighten or drop weaker lines to make room. If it doesn't fit, cut and propose
-     again.
-5. Reply in Chinese, in a few lines: what you proposed and why, with the pull request link; or
-   that nothing was worth changing and what you looked at. If the tools failed, say which."""
-
-
-# What an unattended review may do that normally asks first: test builds land in the local
-# workspace and change nothing anyone sees.
-REVIEW_ALLOWED = frozenset({"build_resume"})
-
-
 def resume_review(settings: Settings, store: SessionStore, days: int, send: bool) -> int:
-    """One unattended review: read-only tools, test builds, and propose_resume_change, which needs
-    no approval because merging the pull request is the approval. Every other side effect is refused."""
+    """One review from the command line, unattended: tools that ask for approval are refused except
+    resume.REVIEW_PREAPPROVED. The server runs the same review in Telegram (`/review`, weekly)."""
     session_id = new_session_id()
     store.create(session_id, "cli")
     agent, tracer = build_agent(settings, skills=("core", "memory", "resume"),
-                                approve=lambda name, a: name in REVIEW_ALLOWED, session_id=session_id)
+                                approve=lambda name, a: name in resume.REVIEW_PREAPPROVED,
+                                session_id=session_id)
     try:
-        text = agent.run(REVIEW_PROMPT.format(days=days)).text
+        text = agent.run(resume.REVIEW_PROMPT.format(days=days)).text
     except anthropic.APIError as e:
         text = f"简历周检没跑完：模型 API 出错（{e.__class__.__name__}）。"
     finally:
@@ -180,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
                       help="hide the value from the model; it is read here, not typed into chat")
     sub.add_parser("interests", help="what Solfish knows you like talking about (no model)")
     rr = sub.add_parser("resume-review",
-                        help="propose résumé updates from recent project activity (for launchd/cron)")
+                        help="propose résumé updates from recent project activity, unattended")
     rr.add_argument("--days", type=int, default=7, help="how far back to look (default 7)")
     rr.add_argument("--send", action="store_true", help="also send the outcome to Telegram")
     sp = sub.add_parser("spark", help="let Solfish start a conversation, then chat")
