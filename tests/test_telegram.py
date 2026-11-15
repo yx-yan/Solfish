@@ -5,7 +5,7 @@ import random
 import threading
 import time
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import httpx2
 import pytest
@@ -188,7 +188,10 @@ def test_sparker_sends_at_planned_times_and_backs_off(settings):
     manager, bot, tg = make(settings, *(message(text(f"q{i}")) for i in range(3)))
     sparker = Sparker(bot, random.Random(7))
     manager.store.db.executescript("INSERT INTO interests (topic) VALUES ('MLX'), ('Rust');")
-    day = datetime(2026, 11, 14, 8, 0)  # a Saturday
+    # The next Saturday: sessions are stamped with the real clock, so a fixed date in the past
+    # would look like the user had just been chatting and block every spark after the first.
+    today = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
+    day = today + timedelta(days=(5 - today.weekday()) % 7 or 7)
     assert not sparker.tick(day)  # plans the day, nothing due yet
     first, second, third = sparker.plan
     assert sparker.tick(first) and tg.sent()[-1]["text"] == "q0"
@@ -200,7 +203,7 @@ def test_sparker_sends_at_planned_times_and_backs_off(settings):
 
     sparker.plan = [first + timedelta(minutes=91)]
     assert sparker.tick(first + timedelta(minutes=91)) and tg.sent()[-1]["text"] == "q1"
-    assert not sparker.tick(datetime(2026, 11, 15, 8, 0))  # a new day, a new plan
+    assert not sparker.tick(day + timedelta(days=1))  # a new day, a new plan
     assert 0 < len(sparker.plan) <= 3
 
 
@@ -295,3 +298,63 @@ def test_review_at_setting(monkeypatch):
     monkeypatch.setenv("SOLFISH_REVIEW_AT", "someday")
     with pytest.raises(ValueError):
         _weekly("SOLFISH_REVIEW_AT")
+
+
+def test_learn_starts_a_check_in_that_your_answers_go_to(settings):
+    manager, bot, tg = make(settings, message(text("今天推了 Dockerfile。三个问题：…")),
+                            message(text("对，补充一点…")))
+    bot.handle(say("/learn"))
+    sid = bot.session
+    wait_idle(manager, sid)
+    assert "Learning check-in" in tg.sent()[0]["text"]
+    assert "Nightly learning check-in" in manager.client.requests[0]["messages"][0]["content"]
+    bot.handle(say("non-root 是为了…"))
+    wait_idle(manager, sid)
+    assert bot.session == sid
+
+
+def test_check_in_runs_nightly_and_never_catches_up(settings):
+    from solfish.channels.telegram import CheckIn
+
+    manager, bot, tg = make(settings)
+    started = []
+    bot.learn = lambda day=None: started.append(day) or "s"
+    checkin = CheckIn(bot, (22, 0))
+    assert checkin.slot(datetime(2026, 11, 16, 21, 59)) == datetime(2026, 11, 15, 22, 0)
+    assert not checkin.tick(datetime(2026, 11, 16, 12, 0))  # first start: wait for tonight
+    assert not checkin.tick(datetime(2026, 11, 16, 21, 59))
+    assert checkin.tick(datetime(2026, 11, 16, 22, 0)) and started == [date(2026, 11, 16)]
+    assert not checkin.tick(datetime(2026, 11, 16, 22, 1))  # once a night
+    # Down from 21:00 to 09:00: the missed check-in is dropped, not sent in the morning
+    assert not checkin.tick(datetime(2026, 11, 18, 9, 0))
+    assert not checkin.tick(datetime(2026, 11, 18, 21, 0))
+    # Just after midnight still counts for the evening before
+    assert checkin.tick(datetime(2026, 11, 19, 0, 30)) and started[-1] == date(2026, 11, 18)
+
+
+def test_check_in_waits_while_you_are_chatting(settings):
+    from solfish.channels.telegram import CheckIn
+
+    manager, bot, tg = make(settings)
+    started = []
+    bot.learn = lambda day=None: started.append(day) or "s"
+    checkin = CheckIn(bot, (22, 0))
+    checkin.tick(datetime(2026, 11, 16, 12, 0))
+    bot.session = manager.create("telegram")  # just talked: updated_at is now
+    now = datetime.now().replace(microsecond=0)
+    checkin.at = (now.hour, now.minute)
+    checkin._set(now - timedelta(days=1))
+    assert not checkin.tick(now)
+    assert checkin.tick(now + CheckIn.QUIET) and len(started) == 1
+
+
+def test_learning_at_setting(monkeypatch):
+    from solfish.config import _daily
+
+    for value, expected in (("22:00", (22, 0)), ("7", (7, 0)), ("", None)):
+        monkeypatch.setenv("SOLFISH_LEARNING_AT", value)
+        assert _daily("SOLFISH_LEARNING_AT") == expected
+    for bad in ("24:00", "22:75", "ten pm"):
+        monkeypatch.setenv("SOLFISH_LEARNING_AT", bad)
+        with pytest.raises(ValueError):
+            _daily("SOLFISH_LEARNING_AT")

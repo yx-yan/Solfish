@@ -434,3 +434,29 @@ same pull request gets the revision.
 - **No eval tasks.** An eval run would push to the real résumé repo. The offline tests build real
   git repos with dated commits and drive the bot and its schedule; the judgement (what is worth a
   line) gets read in the pull request.
+
+## 21. Learning: a nightly check-in, not a form
+
+I'm following a twelve-week plan of FDE skills and keep a public log for each day at
+yuxuanyan.com/learning. The log is worth something only if it is honest and gets written every
+day, so Solfish starts the conversation at 10 pm (`SOLFISH_LEARNING_AT`) instead of waiting for me
+to open a form.
+
+- **It looks before it asks.** `learning_plan` gives this week's "done when" items and the day of
+  the week; `todays_work` reads what I pushed since midnight on any branch, so a pull request still
+  in review counts. Unpushed work doesn't show; that's what the first question is for.
+- **A quiz before the log.** As with reading notes (section 19), it checks my understanding with a
+  few questions drawn from my own work, says what is right or off, and only then drafts the log in
+  my voice. The draft records the mode: "learn" when I worked it through myself, "deliver" when I
+  shipped it with AI help. Over twelve weeks that split shows whether I actually learned things.
+- **Day 7 adds the weekly review.** It compares the week with each "done when" item, drafts the
+  review with status done or partial, and marks the next week active. The plan's titles, goals and
+  materials are mine to change in the site's admin; the token can only add logs and set a week's
+  status and review.
+- **It never catches up.** Unlike the résumé review (section 20), a check-in missed while the
+  server was down is dropped after three hours: a 10 pm prompt at breakfast is noise. It also waits
+  while I'm in another conversation, so my next reply doesn't land in the wrong session.
+- **No eval tasks**, for the same reason as reading: the runner approves every tool call and would
+  post to the real site. Offline tests cover the HTTP side, the git history across branches and
+  the schedule.
+

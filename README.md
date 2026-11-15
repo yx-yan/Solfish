@@ -115,6 +115,9 @@ Optional setup per skill (see `.env.example`):
   you host yourself with the JSON format enabled.
 - **reading**: `SOLFISH_READING_TOKEN` (from `npm run reading:token` in the site repo) lets
   Solfish post the reading notes it helped write; listing the shelf needs nothing.
+- **learning**: `SOLFISH_LEARNING_TOKEN` (from `npm run learning:token` in the site repo) lets it
+  post the daily log and weekly review; `todays_work` reads `SOLFISH_PROJECTS_DIR`. Set
+  `SOLFISH_LEARNING_AT` (e.g. `22:00`) for the nightly check-in in Telegram, or send `/learn`.
 - **research**: nothing; arXiv needs no key.
 - **forms**: `pip install -e ".[forms]" && playwright install chromium`. Put sensitive details
   in the profile from the terminal, so they never reach the model:
@@ -168,6 +171,7 @@ still need the Mac.
 - [x] content: X and LinkedIn publishers; blog drafts; 小红书 and 知乎 handoff (fills the page, I
   press publish)
 - [x] reading: check what I learned from a book, then post it as a reading note on my site
+- [x] learning: nightly check-in on my study plan: what I pushed, a quiz, then the day's log
 - [ ] content: 公众号 drafts through the official API
 - [ ] research: run experiments in a sandbox (code execution) and log results
 - [ ] jobs: interview prep from a JD + my past notes

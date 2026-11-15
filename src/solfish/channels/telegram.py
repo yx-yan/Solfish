@@ -19,14 +19,14 @@ import random
 import sys
 import threading
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import httpx2
 
 from ..config import Settings
 from ..session import Busy, SessionManager
-from ..skills import open_db, resume, spark
+from ..skills import learning, open_db, resume, spark
 
 LIMIT = 4000  # Telegram's cap is 4096 UTF-16 units; this leaves room for emoji
 MAX_PREVIEW = 3500  # of a post awaiting approval; leaves room for the rest of the message
@@ -39,7 +39,8 @@ Send a message to talk to Solfish.
 /files send a recent workspace file
 /spark let Solfish pick something to talk about
 /interests what it knows you like talking about
-/review update the résumé from what you shipped this week"""
+/review update the résumé from what you shipped this week
+/learn tonight's learning check-in: quiz, then the day's log"""
 
 
 class TelegramError(Exception):
@@ -222,6 +223,11 @@ class TelegramBot:
                 self.send("Still working on the last message. /stop to interrupt it.")
             else:
                 self.review()
+        elif cmd == "/learn":
+            if self.session and self.manager.busy(self.session):
+                self.send("Still working on the last message. /stop to interrupt it.")
+            else:
+                self.learn()
         else:
             self.send(HELP)
 
@@ -252,6 +258,15 @@ class TelegramBot:
         self.session = session
         self.send(f"📝 Résumé review: reading the last {days} days of project activity…")
         self.manager.send(session, resume.REVIEW_PROMPT.format(days=days))
+        return session
+
+    def learn(self, day: date | None = None) -> str:
+        """Start the learning check-in as a new session and make it the current one, so the
+        answers to its questions go to it."""
+        session = self.manager.create("telegram")
+        self.session = session
+        self.send("🌙 Learning check-in: looking at today's plan and what you pushed…")
+        self.manager.send(session, learning.CHECKIN_PROMPT.format(day=day or date.today()))
         return session
 
     def _message(self, text: str) -> None:
@@ -406,6 +421,62 @@ class Reviewer:
             self.bot._safely(lambda: self.tick(datetime.now()))
 
 
+class CheckIn:
+    """Starts the learning check-in every day at `settings.learning_at`. Unlike the weekly review it
+    never catches up: a check-in more than GRACE late (the server was down) is skipped, since a
+    10 pm prompt the next morning is noise. It waits while the user is in another conversation."""
+
+    GRACE = timedelta(hours=3)
+    QUIET = timedelta(minutes=10)  # no new session over a conversation this fresh
+
+    def __init__(self, bot: TelegramBot, at: tuple[int, int]) -> None:
+        self.bot, self.at = bot, at
+        self.db = open_db(bot.manager.settings)
+        self.db.execute("CREATE TABLE IF NOT EXISTS schedule (name TEXT PRIMARY KEY, last_run TEXT NOT NULL)")
+        self.db.commit()
+
+    def slot(self, now: datetime) -> datetime:
+        """The most recent scheduled time at or before `now`."""
+        t = now.replace(hour=self.at[0], minute=self.at[1], second=0, microsecond=0)
+        return t if t <= now else t - timedelta(days=1)
+
+    def _set(self, when: datetime) -> None:
+        self.db.execute("INSERT INTO schedule (name, last_run) VALUES ('learning_checkin', ?) "
+                        "ON CONFLICT (name) DO UPDATE SET last_run = excluded.last_run", (when.isoformat(),))
+        self.db.commit()
+
+    def chatting(self, now: datetime) -> bool:
+        bot = self.bot
+        if bot.session is None:
+            return False
+        if bot.manager.busy(bot.session):
+            return True
+        row = bot.manager.store.get(bot.session)
+        return row is not None and now - datetime.fromisoformat(row["updated_at"]) < self.QUIET
+
+    def tick(self, now: datetime) -> bool:
+        """Start a check-in if one is due. True if one was started."""
+        slot = self.slot(now)
+        row = self.db.execute("SELECT last_run FROM schedule WHERE name = 'learning_checkin'").fetchone()
+        if row is not None and datetime.fromisoformat(row[0]) >= slot:
+            return False
+        if row is None and now - slot > timedelta(minutes=1):
+            self._set(slot)  # first start: from the next slot on, not one right away
+            return False
+        if now - slot > self.GRACE:
+            self._set(slot)  # too late to be useful: skip this one
+            return False
+        if self.chatting(now):
+            return False  # try again on the next tick
+        self._set(now)
+        self.bot.learn(slot.date())
+        return True
+
+    def run(self, stop: threading.Event) -> None:
+        while not stop.wait(60):
+            self.bot._safely(lambda: self.tick(datetime.now()))
+
+
 def start(manager: SessionManager, settings: Settings) -> threading.Event | None:
     """Run the bot in the background if a token is configured. Set the returned event to stop it."""
     if not settings.telegram_token:
@@ -417,6 +488,8 @@ def start(manager: SessionManager, settings: Settings) -> threading.Event | None
         threading.Thread(target=Sparker(bot).run, args=(stop,), daemon=True).start()
     if settings.telegram_chat_id is not None and settings.review_at is not None:
         threading.Thread(target=Reviewer(bot, settings.review_at).run, args=(stop,), daemon=True).start()
+    if settings.telegram_chat_id is not None and settings.learning_at is not None:
+        threading.Thread(target=CheckIn(bot, settings.learning_at).run, args=(stop,), daemon=True).start()
     return stop
 
 
