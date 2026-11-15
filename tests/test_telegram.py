@@ -188,7 +188,10 @@ def test_sparker_sends_at_planned_times_and_backs_off(settings):
     manager, bot, tg = make(settings, *(message(text(f"q{i}")) for i in range(3)))
     sparker = Sparker(bot, random.Random(7))
     manager.store.db.executescript("INSERT INTO interests (topic) VALUES ('MLX'), ('Rust');")
-    day = datetime(2026, 11, 14, 8, 0)  # a Saturday
+    # The next Saturday: sessions are stamped with the real clock, so a fixed date in the past
+    # would look like the user had just been chatting and block every spark after the first.
+    today = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
+    day = today + timedelta(days=(5 - today.weekday()) % 7 or 7)
     assert not sparker.tick(day)  # plans the day, nothing due yet
     first, second, third = sparker.plan
     assert sparker.tick(first) and tg.sent()[-1]["text"] == "q0"
@@ -200,7 +203,7 @@ def test_sparker_sends_at_planned_times_and_backs_off(settings):
 
     sparker.plan = [first + timedelta(minutes=91)]
     assert sparker.tick(first + timedelta(minutes=91)) and tg.sent()[-1]["text"] == "q1"
-    assert not sparker.tick(datetime(2026, 11, 15, 8, 0))  # a new day, a new plan
+    assert not sparker.tick(day + timedelta(days=1))  # a new day, a new plan
     assert 0 < len(sparker.plan) <= 3
 
 
