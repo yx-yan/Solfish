@@ -456,7 +456,9 @@ to open a form.
 - **A morning brief closes the loop.** At 9 am (`SOLFISH_LEARNING_BRIEF_AT`, or `/today`) one
   message, no questions: the week and day, which "done when" items look open, one task sized for
   about two hours that picks up the last log's "tomorrow" line, and the part of the week's materials
-  that fits it. The site returns each plan's three latest logs for this. A check-in only looks back;
+  that fits it. The site returns each plan's three latest logs for this. Each week also has a day-by-day table,
+  one row per day in order; `learning_plan` picks out today's and yesterday's rows, so the brief
+  can say what slipped and the check-in has something concrete to compare against. A check-in only looks back;
   without the brief the "tomorrow" I wrote at night was never read in the morning.
 - **It never catches up.** Both run on the same small daily scheduler. Unlike the résumé review
   (section 20), a brief or check-in missed while the

@@ -1351,3 +1351,26 @@ def test_todays_work_without_commits_or_config(settings, tmp_path):
     out = tools.execute("todays_work", {"days": 7}).content
     assert out.startswith("No pushed commits in the last 7 days")
     assert "SOLFISH_PROJECTS_DIR" in learning_tools(settings).execute("todays_work", {}).content
+
+
+def test_schedule_row_reads_the_day_in_order():
+    table = ("| Day | Build (2h) | Read (1h) | Also |\n| --- | --- | --- | --- |\n"
+             "| Mon | Dockerfile | Agent: *Building effective agents* | LeetCode |\n"
+             "| Tue | Health check \\| non-root | Foundations: LLMs | — |")
+    assert learning.schedule_row(table, 1) == (
+        "Day: Mon; Build (2h): Dockerfile; Read (1h): Agent: *Building effective agents*; Also: LeetCode")
+    assert learning.schedule_row(table, 2) == ("Day: Tue; Build (2h): Health check | non-root; "
+                                                "Read (1h): Foundations: LLMs")
+    assert learning.schedule_row(table, 3) is None
+    assert learning.schedule_row("", 1) is None
+
+
+def test_learning_plan_shows_today_and_yesterday(settings, learning_net):
+    routes, _ = learning_net
+    plan = json.loads(json.dumps(PLAN))
+    plan["tracks"][0]["weeks"][0]["scheduleMd"] = (
+        "| Day | Build |\n| --- | --- |\n" + "\n".join(f"| D{i} | task {i} |" for i in range(1, 8)))
+    routes[("GET", "/api/learning/tracks")] = httpx2.Response(200, json=plan)
+    out = learning_tools(settings).execute("learning_plan", {}).content
+    assert "Today (day 7): Day: D7; Build: task 7" in out
+    assert "Yesterday (day 6): Day: D6; Build: task 6" in out
