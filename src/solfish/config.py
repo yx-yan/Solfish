@@ -45,6 +45,18 @@ def _weekly(var: str) -> tuple[int, int, int] | None:
     return WEEKDAYS.index(day[:3]), int(hour), int(minute or 0)
 
 
+def _daily(var: str) -> tuple[int, int] | None:
+    """"22:00" -> (22, 0); unset or empty -> None."""
+    value = os.environ.get(var, "").strip()
+    if not value:
+        return None
+    hour, _, minute = value.partition(":")
+    minute = minute or "0"
+    if not (hour.isdigit() and minute.isdigit() and int(hour) < 24 and int(minute) < 60):
+        raise ValueError(f'{var} must look like "22:00", not {value!r}')
+    return int(hour), int(minute)
+
+
 def _range(var: str, default: str) -> tuple[int, int]:
     """"5-8" -> (5, 8); a single number "0" -> (0, 0)."""
     low, _, high = os.environ.get(var, default).partition("-")
@@ -134,6 +146,8 @@ class Settings:
     blog: BlogDrafts = field(default_factory=BlogDrafts)
     # Adds reading notes on the blog's site (SOLFISH_BLOG_SITE); can do nothing else (see reading.py).
     reading_token: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_READING_TOKEN"))
+    # Adds learning logs and weekly reviews on the same site; can do nothing else (see learning.py).
+    learning_token: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_LEARNING_TOKEN"))
     linkedin_token: str | None = field(default_factory=lambda: os.environ.get("SOLFISH_LINKEDIN_TOKEN"))
     # LinkedIn retires API versions about a year after release, so this needs a bump now and then.
     linkedin_version: str = field(
@@ -151,6 +165,8 @@ class Settings:
     spark_hours: tuple[int, int] = field(default_factory=lambda: _range("SOLFISH_SPARK_HOURS", "9-23"))
     # When the server starts the weekly résumé review in Telegram, e.g. "sun 20:00"; unset: never.
     review_at: tuple[int, int, int] | None = field(default_factory=lambda: _weekly("SOLFISH_REVIEW_AT"))
+    # When the server starts the nightly learning check-in in Telegram, e.g. "22:00"; unset: never.
+    learning_at: tuple[int, int] | None = field(default_factory=lambda: _daily("SOLFISH_LEARNING_AT"))
 
     @property
     def db_path(self) -> Path:

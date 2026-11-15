@@ -14,7 +14,7 @@ import pytest
 
 from solfish import cli
 from solfish.config import BlogDrafts, Smtp, XAuth
-from solfish.skills import SKILLS, Context, content, forms, open_db, reading, research, resume, web
+from solfish.skills import SKILLS, Context, content, forms, learning, open_db, reading, research, resume, web
 from solfish.skills.publishers import blog, linkedin, x, xiaohongshu, zhihu
 from solfish.tools import ToolError, ToolRegistry
 
@@ -1225,3 +1225,126 @@ def test_add_reading_note_timeout_warns_against_retrying(settings, monkeypatch):
     monkeypatch.setattr(reading, "transport", httpx2.MockTransport(handler))
     r = reading_tools(settings).execute("add_reading_note", {"book": "principles", "thoughts": "x"})
     assert r.is_error and "may be posted anyway" in r.content
+
+
+# ---------- learning ----------
+
+PLAN = {"today": "2026-11-22", "tracks": [{
+    "slug": "fde-12-weeks", "title": "FDE in 12 weeks", "startedOn": "2026-11-16", "currentWeek": 1,
+    "logCount": 6,
+    "weeks": [
+        {"weekNo": 1, "title": "Docker", "goalMd": "- non-root image", "materialsMd": "- Docker docs",
+         "reviewMd": "", "status": "active"},
+        {"weekNo": 2, "title": "TypeScript", "goalMd": "", "materialsMd": "", "reviewMd": "",
+         "status": "planned"},
+    ]}]}
+
+
+@pytest.fixture
+def learning_net(monkeypatch):
+    """A fake yuxuanyan.com for the learning routes."""
+    routes: dict[tuple[str, str], httpx2.Response] = {}
+    requests: list[httpx2.Request] = []
+
+    def handler(request):
+        requests.append(request)
+        return routes.get((request.method, request.url.path), httpx2.Response(404))
+
+    monkeypatch.setattr(learning, "transport", httpx2.MockTransport(handler))
+    return routes, requests
+
+
+def learning_tools(settings, token="tok", **extra):
+    s = replace(settings, learning_token=token, **extra)
+    return ToolRegistry(SKILLS["learning"](Context(settings=s, db=open_db(s))).tools)
+
+
+def test_learning_plan_shows_this_week(settings, learning_net):
+    routes, _ = learning_net
+    routes[("GET", "/api/learning/tracks")] = httpx2.Response(200, json=PLAN)
+    out = learning_tools(settings).execute("learning_plan", {}).content
+    assert "# fde-12-weeks: FDE in 12 weeks" in out
+    assert "W2 TypeScript [planned]" in out
+    assert "## This week: W1 Docker, day 7 of 7" in out and "- non-root image" in out
+    routes[("GET", "/api/learning/tracks")] = httpx2.Response(200, json={"today": "2026-11-15", "tracks": []})
+    assert "/admin/learning" in learning_tools(settings).execute("learning_plan", {}).content
+
+
+def test_add_learning_log_needs_approval_and_posts_with_the_token(settings, learning_net):
+    routes, requests = learning_net
+    tools = learning_tools(settings)
+    log = tools.get("add_learning_log")
+    assert log.needs_approval
+    args = {"track": "fde-12-weeks", "body": "Did: multi-stage build", "minutes": 240, "mode": "learn",
+            "logged_on": "2026-11-16"}
+    assert log.approval_args(args)["preview"] == (
+        "Public learning log on yuxuanyan.com/learning/fde-12-weeks\n"
+        "2026-11-16 · 240 min · learning\n\nDid: multi-stage build")
+    routes[("POST", "/api/learning/logs")] = httpx2.Response(
+        201, json={"id": "l1", "url": "https://yuxuanyan.com/en/learning/fde-12-weeks#log-l1"})
+    r = tools.execute("add_learning_log", args)
+    assert r.content == "Posted: https://yuxuanyan.com/en/learning/fde-12-weeks#log-l1"
+    assert requests[0].headers["authorization"] == "Bearer tok"
+    assert json.loads(requests[0].content) == {"track": "fde-12-weeks", "loggedOn": "2026-11-16",
+                                               "minutes": 240, "mode": "learn",
+                                               "bodyMd": "Did: multi-stage build"}
+
+
+def test_review_learning_week(settings, learning_net):
+    routes, requests = learning_net
+    tools = learning_tools(settings)
+    args = {"track": "fde-12-weeks", "week_no": 1, "status": "done", "review": "All met."}
+    assert tools.get("review_learning_week").approval_args(args)["preview"] == (
+        "Week 1 of yuxuanyan.com/learning/fde-12-weeks → done\n\nAll met.")
+    routes[("POST", "/api/learning/weeks")] = httpx2.Response(
+        200, json={"url": "https://yuxuanyan.com/en/learning/fde-12-weeks#week-1"})
+    assert tools.execute("review_learning_week", args).content.endswith("#week-1")
+    assert json.loads(requests[0].content) == {"track": "fde-12-weeks", "weekNo": 1, "status": "done",
+                                               "reviewMd": "All met."}
+
+
+def test_learning_posts_fail_clearly(settings, learning_net, monkeypatch):
+    routes, requests = learning_net
+    args = {"track": "fde-12-weeks", "body": "x", "minutes": 10, "mode": "deliver"}
+    unset = learning_tools(settings, token=None).execute("add_learning_log", args)
+    assert "SOLFISH_LEARNING_TOKEN" in unset.content
+    assert not requests
+    for status, message in [(401, "refused the learning token"), (404, "No plan"), (400, "said 400")]:
+        routes[("POST", "/api/learning/logs")] = httpx2.Response(status, json={"error": "x"})
+        r = learning_tools(settings).execute("add_learning_log", args)
+        assert r.is_error and message in r.content
+
+    def slow(request):
+        raise httpx2.ReadTimeout("slow", request=request)
+
+    monkeypatch.setattr(learning, "transport", httpx2.MockTransport(slow))
+    assert "may be saved anyway" in learning_tools(settings).execute("add_learning_log", args).content
+
+
+def test_todays_work_reads_every_pushed_branch(settings, tmp_path):
+    now = datetime.now().isoformat(timespec="seconds")
+    repo = make_project(tmp_path, "trawl", [("me@test", "Old work", "2020-01-01T00:00:00"),
+                                            ("me@test", "Ship the Dockerfile", now),
+                                            ("other@test", "Someone else's fix", now)])
+    resume.git(repo, "switch", "--quiet", "-c", "feat/health")
+    (repo / "health").write_text("ok", encoding="utf-8")
+    resume.git(repo, "add", ".")
+    resume.git(repo, "commit", "--quiet", "-m", "Add a health check\n\nCurl /health every 30s.")
+    resume.git(repo, "push", "--quiet", "origin", "feat/health")
+    resume.git(repo, "switch", "--quiet", "-c", "local-only")
+    (repo / "wip").write_text("wip", encoding="utf-8")
+    resume.git(repo, "add", ".")
+    resume.git(repo, "commit", "--quiet", "-m", "Unpushed")
+    out = learning_tools(settings, projects_dir=tmp_path / "projects").execute("todays_work", {}).content
+    assert "2 commit(s)" in out
+    assert "feat/health: Add a health check" in out and "Curl /health every 30s." in out
+    assert "main: Ship the Dockerfile" in out
+    assert "Old work" not in out and "Someone else" not in out and "Unpushed" not in out
+
+
+def test_todays_work_without_commits_or_config(settings, tmp_path):
+    make_project(tmp_path, "quiet", [("me@test", "Ancient", "2020-01-01T00:00:00")])
+    tools = learning_tools(settings, projects_dir=tmp_path / "projects")
+    out = tools.execute("todays_work", {"days": 7}).content
+    assert out.startswith("No pushed commits in the last 7 days")
+    assert "SOLFISH_PROJECTS_DIR" in learning_tools(settings).execute("todays_work", {}).content
