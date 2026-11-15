@@ -84,6 +84,17 @@ def preview_review(args: ReviewArgs) -> str:
     return f"{head}\n\n{args.review.strip()}" if args.review.strip() else head
 
 
+def schedule_row(schedule_md: str, day: int) -> str | None:
+    """Day `day` (1-7) of a week's day-by-day Markdown table, as 'Column: cell' pairs; the rows
+    are in order, one per day. None if the table has no such row."""
+    rows = [[c.strip().replace("\\|", "|") for c in line.strip().strip("|").split(" | ")]
+            for line in schedule_md.splitlines() if line.strip().startswith("|")]
+    rows = [r for r in rows if not all(set(c) <= set("-: ") for c in r)]  # drop the --- line
+    if len(rows) < 2 or day >= len(rows):
+        return None
+    return "; ".join(f"{h}: {c}" for h, c in zip(rows[0], rows[day], strict=False) if c and c != "—")
+
+
 def get_plan(settings: Settings) -> str:
     try:
         with httpx2.Client(transport=transport, timeout=TIMEOUT_S) as c:
@@ -108,6 +119,12 @@ def get_plan(settings: Settings) -> str:
         out += ["", f"## This week: W{n} {week['title']}, day {day} of 7",
                 "Done when:", week["goalMd"] or "(not written)",
                 "Materials:", week["materialsMd"] or "(none)"]
+        schedule = week.get("scheduleMd", "")
+        if today_row := schedule_row(schedule, day):
+            out += [f"Today (day {day}): {today_row}"]
+            if day > 1 and (yesterday := schedule_row(schedule, day - 1)):
+                out += [f"Yesterday (day {day - 1}): {yesterday}"]
+            out += ["Day by day:", schedule]
         if week["reviewMd"]:
             out += ["Review so far:", week["reviewMd"]]
         for log in t.get("recentLogs", []):
@@ -191,8 +208,9 @@ The user follows a study plan for forward deployed engineer skills and keeps a p
 at yuxuanyan.com/learning. Each week has "done when" items. A check-in, whether it is the nightly \
 one or they bring it up, goes in this order:
 
-1. Look first: learning_plan for this week and its "done when", todays_work for what they pushed.
-2. Open in Chinese, briefly: what you see they did today, linked to this week's goal. Ask what \
+1. Look first: learning_plan for this week, its "done when" and today's row of the day-by-day \
+schedule, and todays_work for what they pushed.
+2. Open in Chinese, briefly: what you see they did today, against today's row and this week's goal. Ask what \
 else they did, about how long it took, and whether they worked it through themselves or shipped \
 it with AI help (that decides the mode). If nothing was pushed, ask without judging: a rest day \
 or a three-line log is fine, a skipped day only matters twice in a row.
@@ -222,10 +240,11 @@ and today's work, then open the conversation with me. Keep the first message sho
 BRIEF_PROMPT = """Morning learning brief for {day}. Call learning_plan, then reply in Chinese with one \
 short message and no questions:
 - Week n, day d of 7: the week's title, and which "done when" items still look open given the logs.
-- Today's one task: pick up the latest log's "tomorrow" line if there is one, else the next open \
-item. Concrete enough to start on (which repo, which file or command), sized for about two hours.
-- What to read: the one part of this week's materials that fits today's task, about an hour.
-- The day's shape: two hours building, one reading, thirty minutes of LeetCode, the check-in at 10 pm.
+- Today, from today's row of the day-by-day schedule: the build task (about two hours) and the \
+reading (about an hour), each made concrete enough to start on (which repo, file, command, chapter \
+or link from the materials). If the latest log shows yesterday's row unfinished, put what is left \
+of it first and say what slips; if there is no schedule, pick up the latest log's "tomorrow" line.
+- Anything else in today's row (LeetCode, the weekly review at 10 pm).
 - On day 7, add that tonight's check-in includes the weekly review.
 If today is outside the plan, say so in one line. Never invent material that isn't in the plan."""
 
