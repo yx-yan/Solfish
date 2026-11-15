@@ -1237,7 +1237,9 @@ PLAN = {"today": "2026-11-22", "tracks": [{
          "reviewMd": "", "status": "active"},
         {"weekNo": 2, "title": "TypeScript", "goalMd": "", "materialsMd": "", "reviewMd": "",
          "status": "planned"},
-    ]}]}
+    ],
+    "recentLogs": [{"loggedOn": "2026-11-21", "minutes": 180, "mode": "learn",
+                    "bodyMd": "Tomorrow: write RUNBOOK.md"}]}]}
 
 
 @pytest.fixture
@@ -1266,6 +1268,7 @@ def test_learning_plan_shows_this_week(settings, learning_net):
     assert "# fde-12-weeks: FDE in 12 weeks" in out
     assert "W2 TypeScript [planned]" in out
     assert "## This week: W1 Docker, day 7 of 7" in out and "- non-root image" in out
+    assert "## Log 2026-11-21 (180 min, learn)\nTomorrow: write RUNBOOK.md" in out
     routes[("GET", "/api/learning/tracks")] = httpx2.Response(200, json={"today": "2026-11-15", "tracks": []})
     assert "/admin/learning" in learning_tools(settings).execute("learning_plan", {}).content
 

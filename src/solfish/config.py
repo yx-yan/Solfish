@@ -167,6 +167,10 @@ class Settings:
     review_at: tuple[int, int, int] | None = field(default_factory=lambda: _weekly("SOLFISH_REVIEW_AT"))
     # When the server starts the nightly learning check-in in Telegram, e.g. "22:00"; unset: never.
     learning_at: tuple[int, int] | None = field(default_factory=lambda: _daily("SOLFISH_LEARNING_AT"))
+    # When it sends the morning brief (today's task for the study plan), e.g. "09:00"; unset: never.
+    learning_brief_at: tuple[int, int] | None = field(
+        default_factory=lambda: _daily("SOLFISH_LEARNING_BRIEF_AT")
+    )
 
     @property
     def db_path(self) -> Path:
