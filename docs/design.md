@@ -453,7 +453,13 @@ to open a form.
   review with status done or partial, and marks the next week active. The plan's titles, goals and
   materials are mine to change in the site's admin; the token can only add logs and set a week's
   status and review.
-- **It never catches up.** Unlike the résumé review (section 20), a check-in missed while the
+- **A morning brief closes the loop.** At 9 am (`SOLFISH_LEARNING_BRIEF_AT`, or `/today`) one
+  message, no questions: the week and day, which "done when" items look open, one task sized for
+  about two hours that picks up the last log's "tomorrow" line, and the part of the week's materials
+  that fits it. The site returns each plan's three latest logs for this. A check-in only looks back;
+  without the brief the "tomorrow" I wrote at night was never read in the morning.
+- **It never catches up.** Both run on the same small daily scheduler. Unlike the résumé review
+  (section 20), a brief or check-in missed while the
   server was down is dropped after three hours: a 10 pm prompt at breakfast is noise. It also waits
   while I'm in another conversation, so my next reply doesn't land in the wrong session.
 - **No eval tasks**, for the same reason as reading: the runner approves every tool call and would

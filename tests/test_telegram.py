@@ -314,12 +314,11 @@ def test_learn_starts_a_check_in_that_your_answers_go_to(settings):
 
 
 def test_check_in_runs_nightly_and_never_catches_up(settings):
-    from solfish.channels.telegram import CheckIn
+    from solfish.channels.telegram import Daily
 
     manager, bot, tg = make(settings)
     started = []
-    bot.learn = lambda day=None: started.append(day) or "s"
-    checkin = CheckIn(bot, (22, 0))
+    checkin = Daily(bot, "learning_checkin", (22, 0), started.append)
     assert checkin.slot(datetime(2026, 11, 16, 21, 59)) == datetime(2026, 11, 15, 22, 0)
     assert not checkin.tick(datetime(2026, 11, 16, 12, 0))  # first start: wait for tonight
     assert not checkin.tick(datetime(2026, 11, 16, 21, 59))
@@ -333,19 +332,18 @@ def test_check_in_runs_nightly_and_never_catches_up(settings):
 
 
 def test_check_in_waits_while_you_are_chatting(settings):
-    from solfish.channels.telegram import CheckIn
+    from solfish.channels.telegram import Daily
 
     manager, bot, tg = make(settings)
     started = []
-    bot.learn = lambda day=None: started.append(day) or "s"
-    checkin = CheckIn(bot, (22, 0))
+    checkin = Daily(bot, "learning_checkin", (22, 0), started.append)
     checkin.tick(datetime(2026, 11, 16, 12, 0))
     bot.session = manager.create("telegram")  # just talked: updated_at is now
     now = datetime.now().replace(microsecond=0)
     checkin.at = (now.hour, now.minute)
     checkin._set(now - timedelta(days=1))
     assert not checkin.tick(now)
-    assert checkin.tick(now + CheckIn.QUIET) and len(started) == 1
+    assert checkin.tick(now + Daily.QUIET) and len(started) == 1
 
 
 def test_learning_at_setting(monkeypatch):
@@ -358,3 +356,26 @@ def test_learning_at_setting(monkeypatch):
         monkeypatch.setenv("SOLFISH_LEARNING_AT", bad)
         with pytest.raises(ValueError):
             _daily("SOLFISH_LEARNING_AT")
+
+
+def test_today_sends_the_brief_as_its_own_session(settings):
+    manager, bot, tg = make(settings, message(text("第 1 周第 1 天：Docker。今天：镜像改成 multi-stage…")))
+    bot.handle(say("/today"))
+    sid = bot.session
+    wait_idle(manager, sid)
+    assert "Morning learning brief" in manager.client.requests[0]["messages"][0]["content"]
+    assert "multi-stage" in tg.sent()[-1]["text"]
+
+
+def test_brief_and_check_in_keep_separate_schedules(settings):
+    from solfish.channels.telegram import Daily
+
+    manager, bot, tg = make(settings)
+    briefs, checkins = [], []
+    brief = Daily(bot, "learning_brief", (9, 0), briefs.append)
+    checkin = Daily(bot, "learning_checkin", (22, 0), checkins.append)
+    for d in (brief, checkin):
+        d.tick(datetime(2026, 11, 16, 8, 0))
+    assert brief.tick(datetime(2026, 11, 16, 9, 0)) and not checkin.tick(datetime(2026, 11, 16, 9, 0))
+    assert checkin.tick(datetime(2026, 11, 16, 22, 0)) and not brief.tick(datetime(2026, 11, 16, 22, 0))
+    assert briefs == checkins == [date(2026, 11, 16)]

@@ -110,6 +110,8 @@ def get_plan(settings: Settings) -> str:
                 "Materials:", week["materialsMd"] or "(none)"]
         if week["reviewMd"]:
             out += ["Review so far:", week["reviewMd"]]
+        for log in t.get("recentLogs", []):
+            out += ["", f"## Log {log['loggedOn']} ({log['minutes']} min, {log['mode']})", log["bodyMd"]]
     return "\n".join(out)
 
 
@@ -213,6 +215,19 @@ titles, goals and materials are edited by the user at /admin/learning."""
 # user turn, so the cached system prompt stays the same as in any other session.
 CHECKIN_PROMPT = """Nightly learning check-in for {day}. Follow the check-in steps: look at the plan \
 and today's work, then open the conversation with me. Keep the first message short."""
+
+
+# The morning brief (Telegram /today, or from the server at SOLFISH_LEARNING_BRIEF_AT). One message,
+# no questions: it is read on the phone before the day starts.
+BRIEF_PROMPT = """Morning learning brief for {day}. Call learning_plan, then reply in Chinese with one \
+short message and no questions:
+- Week n, day d of 7: the week's title, and which "done when" items still look open given the logs.
+- Today's one task: pick up the latest log's "tomorrow" line if there is one, else the next open \
+item. Concrete enough to start on (which repo, which file or command), sized for about two hours.
+- What to read: the one part of this week's materials that fits today's task, about an hour.
+- The day's shape: two hours building, one reading, thirty minutes of LeetCode, the check-in at 10 pm.
+- On day 7, add that tonight's check-in includes the weekly review.
+If today is outside the plan, say so in one line. Never invent material that isn't in the plan."""
 
 
 def load(ctx: Context) -> Skill:

@@ -40,6 +40,7 @@ Send a message to talk to Solfish.
 /spark let Solfish pick something to talk about
 /interests what it knows you like talking about
 /review update the résumé from what you shipped this week
+/today what to learn today
 /learn tonight's learning check-in: quiz, then the day's log"""
 
 
@@ -223,6 +224,11 @@ class TelegramBot:
                 self.send("Still working on the last message. /stop to interrupt it.")
             else:
                 self.review()
+        elif cmd == "/today":
+            if self.session and self.manager.busy(self.session):
+                self.send("Still working on the last message. /stop to interrupt it.")
+            else:
+                self.brief()
         elif cmd == "/learn":
             if self.session and self.manager.busy(self.session):
                 self.send("Still working on the last message. /stop to interrupt it.")
@@ -267,6 +273,13 @@ class TelegramBot:
         self.session = session
         self.send("🌙 Learning check-in: looking at today's plan and what you pushed…")
         self.manager.send(session, learning.CHECKIN_PROMPT.format(day=day or date.today()))
+        return session
+
+    def brief(self, day: date | None = None) -> str:
+        """Send the morning brief, as a new current session so questions about it can follow."""
+        session = self.manager.create("telegram")
+        self.session = session
+        self.manager.send(session, learning.BRIEF_PROMPT.format(day=day or date.today()))
         return session
 
     def _message(self, text: str) -> None:
@@ -421,16 +434,18 @@ class Reviewer:
             self.bot._safely(lambda: self.tick(datetime.now()))
 
 
-class CheckIn:
-    """Starts the learning check-in every day at `settings.learning_at`. Unlike the weekly review it
-    never catches up: a check-in more than GRACE late (the server was down) is skipped, since a
-    10 pm prompt the next morning is noise. It waits while the user is in another conversation."""
+class Daily:
+    """Starts something every day at `at`: the morning learning brief and the nightly check-in.
+    Unlike the weekly review it never catches up: a run more than GRACE late (the server was down)
+    is skipped, since a 10 pm prompt the next morning is noise. It waits while the user is in
+    another conversation, so their next reply doesn't land in the wrong session."""
 
     GRACE = timedelta(hours=3)
     QUIET = timedelta(minutes=10)  # no new session over a conversation this fresh
 
-    def __init__(self, bot: TelegramBot, at: tuple[int, int]) -> None:
-        self.bot, self.at = bot, at
+    def __init__(self, bot: TelegramBot, name: str, at: tuple[int, int],
+                 begin: Callable[[date], object]) -> None:
+        self.bot, self.name, self.at, self.begin = bot, name, at, begin
         self.db = open_db(bot.manager.settings)
         self.db.execute("CREATE TABLE IF NOT EXISTS schedule (name TEXT PRIMARY KEY, last_run TEXT NOT NULL)")
         self.db.commit()
@@ -441,8 +456,9 @@ class CheckIn:
         return t if t <= now else t - timedelta(days=1)
 
     def _set(self, when: datetime) -> None:
-        self.db.execute("INSERT INTO schedule (name, last_run) VALUES ('learning_checkin', ?) "
-                        "ON CONFLICT (name) DO UPDATE SET last_run = excluded.last_run", (when.isoformat(),))
+        self.db.execute("INSERT INTO schedule (name, last_run) VALUES (?, ?) "
+                        "ON CONFLICT (name) DO UPDATE SET last_run = excluded.last_run",
+                        (self.name, when.isoformat()))
         self.db.commit()
 
     def chatting(self, now: datetime) -> bool:
@@ -455,9 +471,9 @@ class CheckIn:
         return row is not None and now - datetime.fromisoformat(row["updated_at"]) < self.QUIET
 
     def tick(self, now: datetime) -> bool:
-        """Start a check-in if one is due. True if one was started."""
+        """Start a run if one is due. True if one was started."""
         slot = self.slot(now)
-        row = self.db.execute("SELECT last_run FROM schedule WHERE name = 'learning_checkin'").fetchone()
+        row = self.db.execute("SELECT last_run FROM schedule WHERE name = ?", (self.name,)).fetchone()
         if row is not None and datetime.fromisoformat(row[0]) >= slot:
             return False
         if row is None and now - slot > timedelta(minutes=1):
@@ -469,7 +485,7 @@ class CheckIn:
         if self.chatting(now):
             return False  # try again on the next tick
         self._set(now)
-        self.bot.learn(slot.date())
+        self.begin(slot.date())
         return True
 
     def run(self, stop: threading.Event) -> None:
@@ -488,8 +504,10 @@ def start(manager: SessionManager, settings: Settings) -> threading.Event | None
         threading.Thread(target=Sparker(bot).run, args=(stop,), daemon=True).start()
     if settings.telegram_chat_id is not None and settings.review_at is not None:
         threading.Thread(target=Reviewer(bot, settings.review_at).run, args=(stop,), daemon=True).start()
-    if settings.telegram_chat_id is not None and settings.learning_at is not None:
-        threading.Thread(target=CheckIn(bot, settings.learning_at).run, args=(stop,), daemon=True).start()
+    for name, at, begin in (("learning_brief", settings.learning_brief_at, bot.brief),
+                            ("learning_checkin", settings.learning_at, bot.learn)):
+        if settings.telegram_chat_id is not None and at is not None:
+            threading.Thread(target=Daily(bot, name, at, begin).run, args=(stop,), daemon=True).start()
     return stop
 
 
