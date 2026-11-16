@@ -13,6 +13,7 @@ import httpx2
 import pytest
 
 from solfish import cli
+from solfish.app import DEFAULT_SKILLS
 from solfish.config import BlogDrafts, Smtp, XAuth
 from solfish.skills import SKILLS, Context, content, forms, learning, open_db, reading, research, resume, web
 from solfish.skills.publishers import blog, linkedin, x, xiaohongshu, zhihu
@@ -28,6 +29,11 @@ def tools(settings) -> ToolRegistry:
 def test_every_tool_has_a_valid_definition(tools):
     for d in tools.definitions():
         assert d["description"] and d["input_schema"]["type"] == "object"
+
+
+def test_every_skill_is_on_by_default():
+    # `solfish serve` loads only the defaults, so a skill left out here is silently missing.
+    assert set(DEFAULT_SKILLS) == SKILLS.keys()
 
 
 def test_unknown_tool(tools):
